@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0  # 최신 버전으로 올리려면 `pre-commit autoupdate` 실행
+    hooks:
+      - id: ruff          # 린트 + 자동 수정
+        args: [--fix]
+      - id: ruff-format   # 포맷 (black 대체)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files

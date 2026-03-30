@@ -1,0 +1,37 @@
+[project]
+name = "whylog-ai"
+version = "0.1.0"
+description = "WhyLog AI FastAPI Server"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi==0.116.1",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
+    "uvicorn[standard]==0.35.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9.0",
+    "pre-commit>=4.0.0",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # 코드 스타일 오류
+    "W",   # 코드 스타일 경고
+    "F",   # 미사용 변수/임포트 등
+    "I",   # 임포트 정렬
+    "B",   # 잠재적 버그 패턴
+    "C4",  # 컴프리헨션 최적화
+    "UP",  # 최신 파이썬 문법으로 업그레이드
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
