@@ -48,8 +48,9 @@ jobs:
           script: |
             set -e
             cd "${{ secrets.EC2_APP_DIR }}"
-            docker compose down || true
-            docker images whylog/whylog-fastapi:latest -q | xargs -r docker rmi -f
+            docker compose down --remove-orphans || true
+            docker rm -f fastapi || true
+            docker rmi -f whylog/whylog-fastapi:latest || true
             docker compose pull fastapi
-            docker compose up -d fastapi
+            docker compose up -d --force-recreate fastapi
             docker image prune -f
