@@ -1,5 +1,13 @@
 .git
+.github
 .gitignore
+.idea
+.pytest_cache
+.ruff_cache
 .venv
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+README.md
+build_and_push.sh
