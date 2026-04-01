@@ -5,6 +5,7 @@ description = "WhyLog AI FastAPI Server"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi==0.116.1",
+    "google-genai>=1.0.0",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
