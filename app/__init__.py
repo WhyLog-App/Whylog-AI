@@ -1,0 +1,1 @@
+"""Whylog FastAPI application package."""
