@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -50,15 +51,22 @@ async def summarize_commit(
     user_message = f"커밋 메시지: {message}\n\n변경 파일:\n{files_text}"
 
     try:
-        response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=f"{SYSTEM_PROMPT}\n\n{user_message}",
-            config=types.GenerateContentConfig(temperature=0.3),
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=f"{SYSTEM_PROMPT}\n\n{user_message}",
+                config=types.GenerateContentConfig(temperature=0.3),
+            ),
+            timeout=30.0,
         )
         return response.text.strip()
+    except TimeoutError as e:
+        logger.error("Gemini 커밋 요약 타임아웃 (30초 초과)")
+        raise AppServiceError(
+            "Gemini 응답 시간이 초과되었습니다.", status_code=504
+        ) from e
     except Exception as e:
         logger.exception("Gemini 커밋 요약 실패")
         raise AppServiceError(
-            f"커밋 요약 중 오류가 발생했습니다: {e}",
-            status_code=502,
+            "커밋 요약 중 오류가 발생했습니다.", status_code=502
         ) from e
