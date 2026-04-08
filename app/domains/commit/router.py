@@ -12,8 +12,13 @@ router = APIRouter(prefix="/commit", tags=["commit"])
     "/analyze",
     response_model=ApiResponse[CommitAnalyzeResponse],
     summary="커밋 분석 API",
-    description="Spring에서 커밋 메시지와 diff를 받아 LLM으로 요약한 결과를 반환합니다.",
+    description="Spring에서 커밋 메시지와 diff를 받아 "
+    "LLM으로 요약한 결과를 반환합니다.",
 )
-async def analyze_commit(request: CommitAnalyzeRequest) -> ApiResponse[CommitAnalyzeResponse]:
+async def analyze_commit(
+    request: CommitAnalyzeRequest,
+) -> ApiResponse[CommitAnalyzeResponse]:
     summary = await summarize_commit(request.message, request.changed_file_list)
-    return ok_response(CommitAnalyzeResponse(commit_id=request.commit_id, summary=summary))
+    return ok_response(
+        CommitAnalyzeResponse(commit_id=request.commit_id, summary=summary)
+    )
