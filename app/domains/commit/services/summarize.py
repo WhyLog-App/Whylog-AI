@@ -58,4 +58,7 @@ async def summarize_commit(
         return response.text.strip()
     except Exception as e:
         logger.exception("Gemini 커밋 요약 실패")
-        raise AppServiceError(f"커밋 요약 중 오류가 발생했습니다: {e}", status_code=502) from e
+        raise AppServiceError(
+            f"커밋 요약 중 오류가 발생했습니다: {e}",
+            status_code=502,
+        ) from e
