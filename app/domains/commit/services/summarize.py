@@ -3,12 +3,15 @@ import logging
 import os
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import ChangedFile
 
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+RETRY_STATUS_CODES = {500, 502, 503, 504}
+RETRY_BACKOFFS = (1.0, 2.0)  # 1차 실패 후 1초, 2차 실패 후 2초 대기
 logger = logging.getLogger(__name__)
 
 EMBEDDING_PROMPT = """
@@ -66,15 +69,35 @@ def _build_commit_input(message: str, changed_file_list: list[ChangedFile]) -> s
 async def _call_gemini(
     client: genai.Client, prompt: str, user_message: str, timeout: float
 ) -> str:
-    response = await asyncio.wait_for(
-        client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=f"{prompt}\n\n{user_message}",
-            config=types.GenerateContentConfig(temperature=0.3),
-        ),
-        timeout=timeout,
-    )
-    return response.text.strip()
+    last_error: Exception | None = None
+    # 최초 1회 + RETRY_BACKOFFS 만큼 재시도
+    for attempt in range(len(RETRY_BACKOFFS) + 1):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=f"{prompt}\n\n{user_message}",
+                    config=types.GenerateContentConfig(temperature=0.3),
+                ),
+                timeout=timeout,
+            )
+            return response.text.strip()
+        except genai_errors.APIError as e:
+            # 일시적 5xx만 재시도, 4xx(인증/쿼터 등)는 즉시 실패
+            if e.code not in RETRY_STATUS_CODES or attempt >= len(RETRY_BACKOFFS):
+                raise
+            backoff = RETRY_BACKOFFS[attempt]
+            logger.warning(
+                "Gemini %s 응답, %.1f초 후 재시도 (%d/%d)",
+                e.code,
+                backoff,
+                attempt + 1,
+                len(RETRY_BACKOFFS),
+            )
+            last_error = e
+            await asyncio.sleep(backoff)
+    # 도달 불가 (위에서 raise 또는 return). 타입 체커용.
+    raise last_error  # type: ignore[misc]
 
 
 async def summarize_commit(
