@@ -4,9 +4,12 @@ from fastapi import APIRouter, Body
 
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.decision.schemas import (
+    DecisionEmbeddingRequest,
+    DecisionEmbeddingResponse,
     DecisionExtractRequest,
     DecisionExtractResponse,
 )
+from app.domains.decision.services.embedding import embed_and_store_decisions
 from app.domains.decision.services.extraction import extract_decisions
 
 router = APIRouter(prefix="/decisions", tags=["decision"])
@@ -91,4 +94,80 @@ async def extract_decisions_from_transcript(
         ),
         code="DECISION_200",
         message="의사결정 재추출이 완료되었습니다.",
+    )
+
+
+@router.post(
+    "/embeddings",
+    response_model=ApiResponse[DecisionEmbeddingResponse],
+    summary="결정사항 임베딩 생성 및 ChromaDB 저장",
+    description=(
+        "의사결정 추출 결과(decision_cards)를 applied_item 단위로 정규화한 뒤, "
+        "Gemini Embedding API로 벡터를 생성하고 ChromaDB에 저장합니다.\n\n"
+        "- 동일 meeting_id로 재호출 시 기존 문서를 삭제 후 새로 저장합니다.\n"
+        "- 문서 ID 형식: `{meeting_id}_card{i}_item{j}`\n"
+        "- 임베딩 텍스트: `title: 제목 | text: 적용사항: 항목 | 근거: 핵심근거`"
+    ),
+    responses={
+        422: {
+            "model": ApiErrorResponse,
+            "description": "요청 스키마 검증 실패.",
+        },
+        500: {
+            "model": ApiErrorResponse,
+            "description": "서버 설정 오류(예: GEMINI_API_KEY 누락).",
+        },
+        502: {
+            "model": ApiErrorResponse,
+            "description": "Gemini 임베딩 또는 ChromaDB 저장 오류.",
+        },
+    },
+)
+async def create_decision_embeddings(
+    payload: Annotated[
+        DecisionEmbeddingRequest,
+        Body(
+            examples={
+                "minimal": {
+                    "summary": "최소 요청 예시",
+                    "value": {
+                        "meeting_id": "meeting-123",
+                        "decision_result": {
+                            "decision_cards": [
+                                {
+                                    "decision_title": "Redis 캐시 도입",
+                                    "applied_items": [
+                                        "사용자 세션 캐싱 적용",
+                                        "API 응답 캐싱 적용",
+                                    ],
+                                    "decision_reasons": [
+                                        "DB 부하를 줄여 응답 속도를 개선한다.",
+                                    ],
+                                    "timeline": [],
+                                }
+                            ],
+                            "other_mentions": [],
+                        },
+                    },
+                },
+            },
+        ),
+    ],
+) -> ApiResponse[DecisionEmbeddingResponse]:
+    documents = await embed_and_store_decisions(
+        meeting_id=payload.meeting_id,
+        project_id=payload.project_id,
+        decision_result=payload.decision_result,
+    )
+
+    return ok_response(
+        DecisionEmbeddingResponse(
+            meeting_id=payload.meeting_id,
+            project_id=payload.project_id,
+            total_documents=len(documents),
+            document_ids=[doc.document_id for doc in documents],
+            documents=documents,
+        ),
+        code="DECISION_EMBEDDING_200",
+        message="결정사항 임베딩이 생성 및 저장되었습니다.",
     )
