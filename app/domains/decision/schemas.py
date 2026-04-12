@@ -98,3 +98,37 @@ class DecisionExtractResponse(BaseModel):
         description="요청에서 전달받은 project_id echo",
     )
     decision_result: DecisionExtractionResult
+
+
+# ── Decision Embedding DTO ──
+
+
+class EmbeddedDocument(BaseModel):
+    document_id: str = Field(description="ChromaDB 문서 ID")
+    text: str = Field(description="임베딩에 사용된 정규화 텍스트")
+    decision_title: str = Field(description="원본 결정사항 제목")
+    applied_item: str = Field(description="원본 적용사항")
+
+
+class DecisionEmbeddingRequest(BaseModel):
+    meeting_id: str = Field(
+        description="회의 ID (필수)",
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
+    )
+    project_id: str | None = Field(
+        default=None,
+        description="프로젝트 ID (선택)",
+    )
+    decision_result: DecisionExtractionResult = Field(
+        description="의사결정 추출 결과 (decision_cards 포함)",
+    )
+
+
+class DecisionEmbeddingResponse(BaseModel):
+    meeting_id: str = Field(description="처리된 회의 ID")
+    project_id: str | None = Field(default=None, description="프로젝트 ID")
+    total_documents: int = Field(description="저장된 문서 수")
+    document_ids: list[str] = Field(description="저장된 문서 ID 목록")
+    documents: list[EmbeddedDocument] = Field(
+        description="저장된 문서 상세 목록",
+    )
