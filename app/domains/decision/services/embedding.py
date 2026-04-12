@@ -35,6 +35,26 @@ def _normalize_text(value: str) -> str:
     return " ".join((value or "").split())
 
 
+def _build_reason_text(decision_reasons: list[str]) -> tuple[str, int]:
+    """중복을 제거한 근거 문장을 전체 반영 텍스트로 생성한다."""
+    normalized_reasons: list[str] = []
+    seen: set[str] = set()
+    for reason in decision_reasons:
+        normalized = _normalize_text(reason)
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_reasons.append(normalized)
+
+    total_count = len(normalized_reasons)
+    if total_count == 0:
+        return "", 0
+
+    return " | ".join(normalized_reasons), total_count
+
+
 def build_embedding_documents(
     meeting_id: str,
     decision_result: DecisionExtractionResult,
@@ -42,22 +62,22 @@ def build_embedding_documents(
     """의사결정 추출 결과에서 applied_item 단위 임베딩 문서를 생성한다.
 
     문서 ID: {meeting_id}_card{i}_item{j}
-    텍스트: "title: {title} | text: 적용사항: {item} | 근거: {첫 번째 근거}"
+    텍스트: "title: {title} | text: 적용사항: {item} | 근거: {근거들}"
     """
     documents: list[EmbeddedDocument] = []
+    total_reasons = 0
 
     # 카드별 applied_item을 검색 가능한 최소 단위 문서로 분해한다.
     for card_idx, card in enumerate(decision_result.decision_cards):
         title = _normalize_text(card.decision_title)
-        first_reason = ""
-        if card.decision_reasons:
-            first_reason = _normalize_text(card.decision_reasons[0])
+        reason_text, reason_total = _build_reason_text(card.decision_reasons)
+        total_reasons += reason_total
 
         if not card.applied_items:
             doc_id = f"{meeting_id}_card{card_idx}_item0"
             text = f"title: {title or 'none'} | text: 적용사항 없음"
-            if first_reason:
-                text += f" | 근거: {first_reason}"
+            if reason_text:
+                text += f" | 근거: {reason_text}"
             documents.append(
                 EmbeddedDocument(
                     document_id=doc_id,
@@ -72,8 +92,8 @@ def build_embedding_documents(
             doc_id = f"{meeting_id}_card{card_idx}_item{item_idx}"
             normalized_item = _normalize_text(item)
             text = f"title: {title or 'none'} | text: 적용사항: {normalized_item}"
-            if first_reason:
-                text += f" | 근거: {first_reason}"
+            if reason_text:
+                text += f" | 근거: {reason_text}"
             documents.append(
                 EmbeddedDocument(
                     document_id=doc_id,
@@ -83,6 +103,11 @@ def build_embedding_documents(
                 )
             )
 
+    logger.info(
+        "Decision reasons appended (meeting_id=%s, reason_count=%d)",
+        meeting_id,
+        total_reasons,
+    )
     return documents
 
 
