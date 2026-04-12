@@ -57,6 +57,17 @@ CARD_NO_REASONS = DecisionCard(
     timeline=[],
 )
 
+CARD_MULTI_REASONS = DecisionCard(
+    decision_title="캐시 전략 고도화",
+    applied_items=["캐시 만료 정책 적용"],
+    decision_reasons=[
+        "응답 지연을 줄인다.",
+        "DB 부하를 줄인다.",
+        "트래픽 급증 시 안정성을 높인다.",
+    ],
+    timeline=[],
+)
+
 
 # ── 정규화 단위 테스트 ──
 
@@ -129,6 +140,16 @@ class TestBuildEmbeddingDocuments:
         assert "공백 많은 제목" in docs[0].text
         assert "공백 많은 항목" in docs[0].text
         assert "공백 많은 근거" in docs[0].text
+
+    def test_reasons_include_all_reasons(self):
+        """근거는 전체를 중복 제거 후 반영한다."""
+        result = _make_result([CARD_MULTI_REASONS])
+        docs = build_embedding_documents("mtg-all", result)
+
+        assert len(docs) == 1
+        assert "근거: 응답 지연을 줄인다." in docs[0].text
+        assert "DB 부하를 줄인다." in docs[0].text
+        assert "트래픽 급증 시 안정성을 높인다." in docs[0].text
 
 
 # ── ChromaDB 저장 + 재호출 정책 테스트 ──
