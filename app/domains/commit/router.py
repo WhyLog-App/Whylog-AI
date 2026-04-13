@@ -55,6 +55,7 @@ async def analyze_commit(
     background_tasks.add_task(
         generate_embedding_text,
         request.commit_id,
+        request.repository,
         request.message,
         filtered_files,
     )

@@ -8,6 +8,7 @@ class ChangedFile(BaseModel):
 
 class CommitAnalyzeRequest(BaseModel):
     commit_id: int = Field(ge=0, description="커밋 ID")
+    repository: str = Field(min_length=1, description="레포지토리 이름")
     message: str = Field(min_length=1, description="커밋 메시지")
     changed_file_list: list[ChangedFile] = Field(
         min_length=1, description="변경된 파일 목록"
