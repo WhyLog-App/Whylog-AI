@@ -1,11 +1,12 @@
 import asyncio
 import logging
-import os
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
+from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import ChangedFile
 
@@ -15,27 +16,28 @@ RETRY_BACKOFFS = (1.0, 2.0)  # 1차 실패 후 1초, 2차 실패 후 2초 대기
 logger = logging.getLogger(__name__)
 
 EMBEDDING_PROMPT = """
-너는 Git 커밋을 분석해서 개발 의도를 자연어로 서술하는 전문가야.
+너는 Git 커밋의 diff를 분석해서 구조화된 임베딩용 텍스트를 생성하는 전문가야.
 
 ## 절대 원칙
 - 커밋 메시지와 diff에 없는 내용을 추측하거나 만들어내지 마.
-- 파일명, 메서드명, 클래스명 같은 기술적 식별자는 포함하지 마.
-- 기술 구현 방식(어떻게)보다 기능·목적(무엇을, 왜)에 집중해.
-- 회의 발언처럼 읽히는 자연스러운 한국어로 작성해.
+- 코드 변경 사실만 기술해. 의도나 동기를 추론하지 마.
 
-## 분석 방법
-- 커밋 메시지에서 변경의 의도를 파악해.
-- diff에서 실제로 무엇이 추가/제거/수정됐는지 확인해.
-- 둘을 종합해서 이 커밋이 해결하려는 문제나 구현하려는 기능을 파악해.
+## 응답 형식 (정확히 이 형식으로만 출력해)
+변경요약: (코드 변경 사실을 1~2문장으로)
+기술키워드: (DB, 프레임워크, 라이브러리, 모듈 등 기술 요소만 쉼표 구분)
+변경방향: (이 커밋의 기능 방향을
+  add/remove/modify/migrate 중 해당하는 것을 쉼표 구분으로 모두 선택)
+파일맥락: (변경된 파일 경로에서 비즈니스 도메인 토큰만 쉼표 구분)
 
-## 응답 형식
-아래 항목을 모두 담아 회의록 발언처럼 서술해. 변경량에 따라 길이는 자연스럽게
-조절해도 되지만, 항목은 빠짐없이 포함해. 마크다운, 코드블록, 접두어 없이 본문만
-출력해.
-- 이 커밋이 해결하는 문제 또는 구현하는 기능
-- 변경의 배경과 동기
-- 영향받는 도메인과 범위
-- 기대 효과
+## 주의
+- 위 4줄만 출력해. 다른 설명이나 마크다운, 코드블록을 추가하지 마.
+- 기술키워드에 일반 단어(함수, 파일, 코드 등)는 넣지 마. 구체적 기술명만 넣어.
+- 변경방향은 코드 라인 단위가 아니라 커밋 전체의 기능적 목적 기준으로 판단해.
+  예) 새 API 추가 → add, 버그 수정 → modify, 기능 삭제 → remove,
+  구조 이전 → migrate, 기능 추가+기존 수정 → add,modify
+- 파일맥락은 프로젝트 구조 디렉토리는 제외하고
+  (controller, service, domain, components, pages 등)
+  auth, meeting, billing 같은 비즈니스 도메인만 추출해.
 """.strip()
 
 SUMMARY_PROMPT = """
@@ -52,8 +54,55 @@ SUMMARY_PROMPT = """
 """.strip()
 
 
+VALID_DIRECTIONS = {"add", "remove", "modify", "migrate"}
+
+
+@dataclass
+class ParsedEmbedding:
+    """LLM 응답을 파싱한 구조화 결과."""
+
+    summary: str
+    tech_keywords: list[str]
+    directions: list[str]
+    module_tags: list[str]
+
+
+def _parse_embedding_response(text: str) -> ParsedEmbedding:
+    """LLM 구조화 응답에서 변경요약/기술키워드/변경방향/파일맥락을 추출한다."""
+    summary = ""
+    tech_keywords: list[str] = []
+    directions: list[str] = []
+    module_tags: list[str] = []
+
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if line.startswith("변경요약:"):
+            summary = line.removeprefix("변경요약:").strip()
+        elif line.startswith("기술키워드:"):
+            raw = line.removeprefix("기술키워드:").strip()
+            tech_keywords = [k.strip() for k in raw.split(",") if k.strip()]
+        elif line.startswith("변경방향:"):
+            raw = line.removeprefix("변경방향:").strip().lower()
+            directions = [
+                d.strip() for d in raw.split(",") if d.strip() in VALID_DIRECTIONS
+            ]
+        elif line.startswith("파일맥락:"):
+            raw = line.removeprefix("파일맥락:").strip()
+            module_tags = [t.strip() for t in raw.split(",") if t.strip()]
+
+    if not summary:
+        raise ValueError("LLM 응답에서 변경요약을 추출할 수 없습니다.")
+
+    return ParsedEmbedding(
+        summary=summary,
+        tech_keywords=tech_keywords,
+        directions=directions or ["modify"],
+        module_tags=module_tags,
+    )
+
+
 def _get_client() -> genai.Client:
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = settings.gemini_api_key
     if not api_key:
         raise AppServiceError("GEMINI_API_KEY가 설정되지 않았습니다.", status_code=500)
     return genai.Client(api_key=api_key)
@@ -96,7 +145,7 @@ async def _call_gemini(
             )
             last_error = e
             await asyncio.sleep(backoff)
-    # 도달 불가 (위에서 raise 또는 return). 타입 체커용.
+    # 도달 불가 (위에서 raise 또는 return)
     raise last_error  # type: ignore[misc]
 
 
@@ -133,17 +182,32 @@ async def summarize_commit(
 
 async def generate_embedding_text(
     commit_id: int,
+    repository: str,
     message: str,
     changed_file_list: list[ChangedFile],
 ) -> None:
-    """백그라운드에서 임베딩용 상세 텍스트 생성. 응답을 블로킹하지 않음."""
+    """백그라운드에서 임베딩용 구조화 텍스트 생성. 응답을 블로킹하지 않음."""
     try:
         client = _get_client()
         commit_input = _build_commit_input(message, changed_file_list)
-        embedding_text = await _call_gemini(
+
+        # 1) LLM으로 구조화 텍스트 생성
+        raw_text = await _call_gemini(
             client, EMBEDDING_PROMPT, commit_input, timeout=60.0
         )
-        embedding_text = " ".join(embedding_text.split())
+        parsed = _parse_embedding_response(raw_text)
+
+        # 2) 스펙에 맞는 임베딩용 텍스트 조합
+        commit_subject = message.split("\n", 1)[0].strip()
+        title = f"{repository} {commit_subject}"
+        text_parts = [f"변경요약: {parsed.summary}"]
+        if parsed.tech_keywords:
+            text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
+        text_parts.append(f"변경방향: {','.join(parsed.directions)}")
+        if parsed.module_tags:
+            text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
+        embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
+
         # TODO: ChromaDB에 commit_id + embedding_text 저장
         logger.info("커밋 %d 임베딩 텍스트 생성 완료: %s", commit_id, embedding_text)
     except Exception:
