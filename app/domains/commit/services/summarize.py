@@ -96,7 +96,7 @@ def _parse_embedding_response(text: str) -> ParsedEmbedding:
     return ParsedEmbedding(
         summary=summary,
         tech_keywords=tech_keywords,
-        directions=directions or ["modify"],
+        directions=directions,
         module_tags=module_tags,
     )
 
@@ -203,7 +203,8 @@ async def generate_embedding_text(
         text_parts = [f"변경요약: {parsed.summary}"]
         if parsed.tech_keywords:
             text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
-        text_parts.append(f"변경방향: {','.join(parsed.directions)}")
+        if parsed.directions:
+            text_parts.append(f"변경방향: {','.join(parsed.directions)}")
         if parsed.module_tags:
             text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
         embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
