@@ -14,6 +14,8 @@ from app.core.responses import error_response
 # .env 파일의 환경변수 로드 (DEEPGRAM_API_KEY 등)
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.include_router(api_router)
 logger = logging.getLogger(__name__)
