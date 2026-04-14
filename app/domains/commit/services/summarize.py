@@ -150,20 +150,39 @@ async def _call_gemini(
     raise last_error  # type: ignore[misc]
 
 
-async def _generate_embedding(text: str) -> list[float]:
+async def _generate_embedding(text: str, timeout: float = 30.0) -> list[float]:
     """Gemini Embedding API로 단일 텍스트의 임베딩 벡터를 생성한다."""
     client = _get_client()
-    try:
-        response = await client.aio.models.embed_content(
-            model=settings.decision_embedding_model,
-            contents=text,
-        )
-    except Exception as e:
-        raise AppServiceError(
-            f"Gemini 임베딩 생성 실패: {e}",
-            status_code=502,
-        ) from e
-    return response.embeddings[0].values
+    last_error: Exception | None = None
+    for attempt in range(len(RETRY_BACKOFFS) + 1):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.embed_content(
+                    model=settings.decision_embedding_model,
+                    contents=text,
+                ),
+                timeout=timeout,
+            )
+            if not response.embeddings:
+                raise ValueError("Gemini 임베딩 응답이 비어 있습니다.")
+            return response.embeddings[0].values
+        except genai_errors.APIError as e:
+            if e.code not in RETRY_STATUS_CODES or attempt >= len(RETRY_BACKOFFS):
+                raise AppServiceError(
+                    f"Gemini 임베딩 생성 실패: {e}",
+                    status_code=502,
+                ) from e
+            backoff = RETRY_BACKOFFS[attempt]
+            logger.warning(
+                "Gemini 임베딩 %s 응답, %.1f초 후 재시도 (%d/%d)",
+                e.code,
+                backoff,
+                attempt + 1,
+                len(RETRY_BACKOFFS),
+            )
+            last_error = e
+            await asyncio.sleep(backoff)
+    raise last_error  # type: ignore[misc]
 
 
 async def summarize_commit(
