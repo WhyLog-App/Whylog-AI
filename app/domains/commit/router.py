@@ -18,8 +18,14 @@ router = APIRouter(prefix="/commit", tags=["commit"])
     response_model=ApiResponse[CommitAnalyzeResponse],
     summary="커밋 분석 API",
     description="Spring에서 커밋 메시지와 diff를 받아 "
-    "LLM으로 요약한 결과를 반환합니다. "
-    "임베딩용 상세 텍스트는 백그라운드에서 생성됩니다.",
+    "LLM(Gemini)으로 요약한 결과를 반환합니다.\n\n"
+    "**백그라운드 임베딩 저장:**\n"
+    "- 구조화 임베딩 텍스트 생성 → Gemini Embedding API 벡터 변환 → "
+    "ChromaDB(commit_embeddings) 저장\n"
+    "- 동일 commit_id 재호출 시 기존 데이터를 덮어씁니다 (upsert)\n"
+    "- 문서 ID: commit_{commit_id}\n"
+    "- 임베딩 텍스트: title: {repo} {subject} | text: "
+    "변경요약: | 기술키워드: | 변경방향: | 파일맥락: ",
     responses={
         400: {
             "model": ApiErrorResponse,

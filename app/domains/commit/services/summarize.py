@@ -6,6 +6,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
+from app.core.chroma import get_commit_collection
 from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import ChangedFile
@@ -149,6 +150,22 @@ async def _call_gemini(
     raise last_error  # type: ignore[misc]
 
 
+async def _generate_embedding(text: str) -> list[float]:
+    """Gemini Embedding API로 단일 텍스트의 임베딩 벡터를 생성한다."""
+    client = _get_client()
+    try:
+        response = await client.aio.models.embed_content(
+            model=settings.decision_embedding_model,
+            contents=text,
+        )
+    except Exception as e:
+        raise AppServiceError(
+            f"Gemini 임베딩 생성 실패: {e}",
+            status_code=502,
+        ) from e
+    return response.embeddings[0].values
+
+
 async def summarize_commit(
     message: str,
     changed_file_list: list[ChangedFile],
@@ -209,7 +226,26 @@ async def generate_embedding_text(
             text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
         embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
 
-        # TODO: ChromaDB에 commit_id + embedding_text 저장
-        logger.info("커밋 %d 임베딩 텍스트 생성 완료: %s", commit_id, embedding_text)
+        # 3) 임베딩 벡터 생성
+        embedding = await _generate_embedding(embedding_text)
+
+        # 4) ChromaDB 저장
+        collection = get_commit_collection()
+        doc_id = f"commit_{commit_id}"
+        metadata = {
+            "commit_id": commit_id,
+            "repository": repository,
+            "direction": ",".join(parsed.directions),
+            "tech_keywords_csv": ",".join(parsed.tech_keywords),
+            "module_tags_csv": ",".join(parsed.module_tags),
+        }
+        await asyncio.to_thread(
+            collection.upsert,
+            ids=[doc_id],
+            documents=[embedding_text],
+            embeddings=[embedding],
+            metadatas=[metadata],
+        )
+        logger.info("커밋 %d 임베딩 저장 완료: %s", commit_id, doc_id)
     except Exception:
         logger.exception("커밋 %d 임베딩 텍스트 생성 실패", commit_id)
