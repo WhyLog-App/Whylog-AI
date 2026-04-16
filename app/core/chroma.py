@@ -13,6 +13,15 @@ def get_chroma_client() -> chromadb.ClientAPI:
     return _client
 
 
+def get_commit_collection() -> chromadb.Collection:
+    """커밋 임베딩 컬렉션을 반환한다 (없으면 자동 생성)."""
+    client = get_chroma_client()
+    return client.get_or_create_collection(
+        name=settings.commit_collection,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
 def get_decision_collection() -> chromadb.Collection:
     """결정사항 임베딩 컬렉션을 반환한다 (없으면 자동 생성)."""
     client = get_chroma_client()

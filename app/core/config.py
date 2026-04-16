@@ -20,6 +20,11 @@ class AppSettings(BaseModel):
         default_factory=lambda: os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
     )
 
+    # Commit Embedding
+    commit_collection: str = Field(
+        default_factory=lambda: os.getenv("COMMIT_COLLECTION", "commit_embeddings")
+    )
+
     # Decision Embedding
     decision_embedding_model: str = Field(
         default_factory=lambda: os.getenv(
