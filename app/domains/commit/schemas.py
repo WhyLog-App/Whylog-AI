@@ -40,10 +40,6 @@ class DecisionCommitMatchRequest(BaseModel):
         description="결정사항 임베딩을 조회할 회의 ID",
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
     )
-    project_id: str | None = Field(
-        default=None,
-        description="프로젝트 ID (선택, 커밋 메타데이터 필터 보조)",
-    )
     repository: str | None = Field(
         default=None,
         description="레포지토리 이름 (선택, 미지정 시 전체 후보 조회)",
@@ -94,7 +90,6 @@ class DecisionCommitMatchItem(BaseModel):
 
 class DecisionCommitMatchResponse(BaseModel):
     meeting_id: str = Field(description="회의 ID")
-    project_id: str | None = Field(default=None, description="프로젝트 ID")
     repository: str | None = Field(default=None, description="레포지토리 필터")
     total_decision_items: int = Field(description="조회된 적용사항 문서 수")
     matched_decision_items: int = Field(description="연결 결과가 존재하는 문서 수")

@@ -307,7 +307,6 @@ async def match_decisions_with_commits(
     if not decision_entries:
         return DecisionCommitMatchResponse(
             meeting_id=payload.meeting_id,
-            project_id=payload.project_id,
             repository=payload.repository,
             total_decision_items=0,
             matched_decision_items=0,
@@ -347,13 +346,6 @@ async def match_decisions_with_commits(
             commit_repository = _first_str(metadata.get("repository"))
 
             if payload.repository and commit_repository != payload.repository:
-                continue
-            commit_project = _first_str(metadata.get("project_id"))
-            if (
-                payload.project_id
-                and commit_project
-                and commit_project != payload.project_id
-            ):
                 continue
 
             commit_document = docs[idx] if idx < len(docs) and docs[idx] else ""
@@ -432,7 +424,6 @@ async def match_decisions_with_commits(
 
     return DecisionCommitMatchResponse(
         meeting_id=payload.meeting_id,
-        project_id=payload.project_id,
         repository=payload.repository,
         total_decision_items=len(decision_entries),
         matched_decision_items=matched_decision_items,

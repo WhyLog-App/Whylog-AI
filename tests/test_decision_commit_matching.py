@@ -23,7 +23,6 @@ from app.main import app
 def _build_match_payload() -> dict:
     return {
         "meeting_id": "meeting-123",
-        "project_id": "project-abc",
         "repository": "whylog/web",
         "top_k": 5,
     }
@@ -326,7 +325,6 @@ class TestDecisionCommitMatchingEndpoint:
     def test_match_endpoint_success(self):
         mock_result = DecisionCommitMatchResponse(
             meeting_id="meeting-123",
-            project_id="project-abc",
             repository="whylog/web",
             total_decision_items=1,
             matched_decision_items=1,
