@@ -218,6 +218,7 @@ async def summarize_commit(
 
 async def generate_embedding_text(
     commit_id: int,
+    commit_hash: str | None,
     repository: str,
     message: str,
     changed_file_list: list[ChangedFile],
@@ -258,6 +259,8 @@ async def generate_embedding_text(
             "tech_keywords_csv": ",".join(parsed.tech_keywords),
             "module_tags_csv": ",".join(parsed.module_tags),
         }
+        if commit_hash:
+            metadata["commit_hash"] = commit_hash
         await asyncio.to_thread(
             collection.upsert,
             ids=[doc_id],
