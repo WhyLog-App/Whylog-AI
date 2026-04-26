@@ -73,9 +73,7 @@ def _format_tokens(tokens: set[str], *, limit: int = 3) -> str:
     sorted_tokens = sorted(tokens)
     shown = sorted_tokens[:limit]
     suffix = (
-        ""
-        if len(sorted_tokens) <= limit
-        else f" 외 {len(sorted_tokens) - limit}개"
+        "" if len(sorted_tokens) <= limit else f" 외 {len(sorted_tokens) - limit}개"
     )
     return ", ".join(shown) + suffix
 
