@@ -13,17 +13,17 @@ from fastapi import (
 
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
-from app.domains.decision.schemas import DecisionExtractionResult
+from app.domains.decision.schemas import MeetingAnalysisResult
 from app.domains.decision.services.extraction import (
-    build_decision_result,
-    extract_decision_cards_only,
-    extract_decisions,
+    build_analysis_result,
+    extract_applications_only,
+    extract_meeting_analysis,
     extract_overall_analysis,
 )
 from app.domains.pipeline.schemas import (
-    TranscribeDecisionResponse,
-    TranscribeDecisionRunAccepted,
-    TranscribeDecisionRunStatus,
+    TranscribeAnalysisResponse,
+    TranscribeAnalysisRunAccepted,
+    TranscribeAnalysisRunStatus,
 )
 from app.domains.pipeline.services.decision_runs import (
     create_run,
@@ -45,26 +45,26 @@ AUDIO_FILE_DESCRIPTION = (
 )
 SPRING_ASYNC_GUIDE = (
     "Spring 연동 가이드:\n"
-    "1) POST /api/transcribe/decisions/runs 호출로 run_id를 발급받습니다.\n"
-    "2) GET /api/transcribe/decisions/runs/{run_id}를 "
+    "1) POST /api/transcribe/applications/runs 호출로 run_id를 발급받습니다.\n"
+    "2) GET /api/transcribe/applications/runs/{run_id}를 "
     "2~5초 간격으로 폴링합니다.\n"
     "3) phase=transcript_ready 시 transcript_segments를 "
     "회의 요약 화면에 먼저 반영할 수 있습니다.\n"
     "4) phase=summary_ready 시 overall_analysis를 반영해 "
     "요약 화면을 고도화할 수 있습니다.\n"
-    "5) status=completed && phase=decisions_ready 시 "
-    "decision_cards 포함 최종 결과를 저장/전파합니다.\n"
+    "5) status=completed && phase=applications_ready 시 "
+    "applications 포함 최종 결과를 저장/전파합니다.\n"
     "6) status=failed 시 error를 기록하고 필요 시 재시도를 수행합니다.\n"
     "7) run 조회 404는 만료/정리/재기동 유실 가능성이 있으므로 "
     "재요청 정책을 둡니다."
 )
-SPRING_DECISION_FAQ = (
+SPRING_APPLICATION_FAQ = (
     "팀 공유 FAQ:\n"
     "- timeline.speaker_id는 null일 수 있습니다. "
     "짧은 응답어/모호 발화에서 오탐을 피하기 위한 설계입니다.\n"
-    "- summary_ready 단계의 final_decisions_list는 임시값일 수 있으며, "
+    "- summary_ready 단계의 application_titles는 임시값일 수 있으며, "
     "completed에서 최종 동기화됩니다.\n"
-    "- 재추출이 필요하면 /api/decisions/extract에 "
+    "- 재추출이 필요하면 /api/meeting-analysis/extract에 "
     "저장된 transcript_segments를 전달하세요."
 )
 
@@ -109,7 +109,7 @@ async def _transcribe_and_correct(
     )
 
 
-async def _run_transcribe_decision_run(
+async def _run_transcribe_application_run(
     run_id: str,
     audio_bytes: bytes,
     content_type: str,
@@ -125,11 +125,11 @@ async def _run_transcribe_decision_run(
             content_type=content_type,
             num_speakers=num_speakers,
         )
-        partial_result = TranscribeDecisionResponse(
+        partial_result = TranscribeAnalysisResponse(
             meeting_id=meeting_id,
             project_id=project_id,
             transcript_segments=transcript_segments,
-            decision_result=DecisionExtractionResult(),
+            analysis_result=MeetingAnalysisResult(),
         )
         await mark_run_phase(
             run_id=run_id,
@@ -138,17 +138,17 @@ async def _run_transcribe_decision_run(
         )
 
         overall_analysis = await extract_overall_analysis(transcript_segments)
-        partial_result.decision_result.overall_analysis = overall_analysis
+        partial_result.analysis_result.overall_analysis = overall_analysis
         await mark_run_phase(
             run_id=run_id,
             phase="summary_ready",
             result=partial_result,
         )
 
-        cards_result = await extract_decision_cards_only(transcript_segments)
-        partial_result.decision_result = build_decision_result(
-            overall_analysis=partial_result.decision_result.overall_analysis,
-            cards_result=cards_result,
+        applications_result = await extract_applications_only(transcript_segments)
+        partial_result.analysis_result = build_analysis_result(
+            overall_analysis=partial_result.analysis_result.overall_analysis,
+            applications_result=applications_result,
         )
 
         await mark_run_completed(
@@ -159,7 +159,7 @@ async def _run_transcribe_decision_run(
         await mark_run_failed(run_id, f"{e.status_code}: {e.message}")
     except Exception as e:
         logger.exception(
-            "transcribe/decisions run failed",
+            "transcribe/applications run failed",
             extra={"run_id": run_id},
         )
         await mark_run_failed(run_id, f"unexpected_error: {e}")
@@ -174,8 +174,8 @@ async def _run_transcribe_decision_run(
         "오디오 파일을 업로드하면 Deepgram STT와 Gemini 후처리를 거쳐 "
         "화자 분리 전사 세그먼트를 반환합니다.\n\n"
         "Spring 가이드: 이 엔드포인트는 전사 결과만 필요할 때 사용합니다. "
-        "결정사항까지 필요하면 /api/transcribe/decisions(동기) 또는 "
-        "/api/transcribe/decisions/runs(비동기)를 사용하세요."
+        "적용사항까지 필요하면 /api/transcribe/applications(동기) 또는 "
+        "/api/transcribe/applications/runs(비동기)를 사용하세요."
     ),
     responses={
         413: {
@@ -230,14 +230,14 @@ async def transcribe_audio(
 
 
 @router.post(
-    "/decisions",
-    response_model=ApiResponse[TranscribeDecisionResponse],
-    summary="전사 + 후처리 + 의사결정 추출(동기)",
+    "/applications",
+    response_model=ApiResponse[TranscribeAnalysisResponse],
+    summary="전사 + 후처리 + 회의 분석/적용사항 추출(동기)",
     description=(
-        "오디오 업로드 후 STT, 후처리, 의사결정 추출을 한 번에 완료해 "
+        "오디오 업로드 후 STT, 후처리, 회의 분석/적용사항 추출을 한 번에 완료해 "
         "최종 결과를 동기 응답으로 반환합니다.\n\n"
         "Spring 가이드: 긴 회의에서는 타임아웃 위험이 크므로 "
-        "운영 환경에서는 /api/transcribe/decisions/runs 비동기 방식을 권장합니다."
+        "운영 환경에서는 /api/transcribe/applications/runs 비동기 방식을 권장합니다."
     ),
     responses={
         413: {
@@ -272,7 +272,7 @@ async def transcribe_audio(
         },
     },
 )
-async def transcribe_and_extract_decisions(
+async def transcribe_and_extract_applications(
     audio: Annotated[UploadFile, File(description=AUDIO_FILE_DESCRIPTION)],
     num_speakers: int | None = Form(
         default=None,
@@ -288,32 +288,32 @@ async def transcribe_and_extract_decisions(
         default=None,
         description="호출 측이 관리하는 프로젝트 ID(선택).",
     ),
-) -> ApiResponse[TranscribeDecisionResponse]:
-    # 전사부터 의사결정 추출까지 동기로 한 번에 수행
+) -> ApiResponse[TranscribeAnalysisResponse]:
+    # 전사부터 회의 분석/적용사항 추출까지 동기로 한 번에 수행
     transcript_segments = await _transcribe_and_correct(audio, num_speakers)
-    decision_result = await extract_decisions(transcript_segments)
+    analysis_result = await extract_meeting_analysis(transcript_segments)
 
     return ok_response(
-        TranscribeDecisionResponse(
+        TranscribeAnalysisResponse(
             meeting_id=meeting_id,
             project_id=project_id,
             transcript_segments=transcript_segments,
-            decision_result=decision_result,
+            analysis_result=analysis_result,
         ),
         code="TRANSCRIBE_200",
-        message="전사, 후처리, 의사결정 추출이 완료되었습니다.",
+        message="전사, 후처리, 회의 분석/적용사항 추출이 완료되었습니다.",
     )
 
 
 @router.post(
-    "/decisions/runs",
-    response_model=ApiResponse[TranscribeDecisionRunAccepted],
+    "/applications/runs",
+    response_model=ApiResponse[TranscribeAnalysisRunAccepted],
     status_code=202,
-    summary="전사 + 의사결정 추출 비동기 실행 생성",
+    summary="전사 + 회의 분석/적용사항 추출 비동기 실행 생성",
     description=(
         "장시간 작업을 백그라운드로 실행합니다. "
         "즉시 run_id를 반환하며, 상태는 "
-        "GET /api/transcribe/decisions/runs/{run_id}로 조회합니다.\n\n"
+        "GET /api/transcribe/applications/runs/{run_id}로 조회합니다.\n\n"
         f"{SPRING_ASYNC_GUIDE}"
     ),
     responses={
@@ -340,7 +340,7 @@ async def transcribe_and_extract_decisions(
         },
     },
 )
-async def create_transcribe_decision_run(
+async def create_transcribe_application_run(
     background_tasks: BackgroundTasks,
     audio: Annotated[UploadFile, File(description=AUDIO_FILE_DESCRIPTION)],
     num_speakers: int | None = Form(
@@ -357,13 +357,13 @@ async def create_transcribe_decision_run(
         default=None,
         description="호출 측이 관리하는 프로젝트 ID(선택).",
     ),
-) -> ApiResponse[TranscribeDecisionRunAccepted]:
+) -> ApiResponse[TranscribeAnalysisRunAccepted]:
     # 장시간 처리를 백그라운드 run으로 접수하고 run_id를 반환
     content_type = _resolve_content_type(audio)
     audio_bytes = await _read_audio_bytes(audio)
     accepted = await create_run(meeting_id=meeting_id, project_id=project_id)
     background_tasks.add_task(
-        _run_transcribe_decision_run,
+        _run_transcribe_application_run,
         accepted.run_id,
         audio_bytes,
         content_type,
@@ -379,20 +379,20 @@ async def create_transcribe_decision_run(
 
 
 @router.get(
-    "/decisions/runs/{run_id}",
-    response_model=ApiResponse[TranscribeDecisionRunStatus],
+    "/applications/runs/{run_id}",
+    response_model=ApiResponse[TranscribeAnalysisRunStatus],
     summary="비동기 실행 상태/중간결과 조회",
     description=(
         "run_id 기준으로 상태를 조회합니다. "
         "phase 값은 queued/transcribing/transcript_ready/"
-        "summary_ready/decisions_ready/failed 중 하나입니다.\n\n"
+        "summary_ready/applications_ready/failed 중 하나입니다.\n\n"
         "Spring 처리 규칙:\n"
         "- phase=transcript_ready: transcript_segments 사용 가능(요약 화면 1차 반영)\n"
-        "- phase=summary_ready: decision_result.overall_analysis까지 사용 가능\n"
-        "  (주의: final_decisions_list는 completed 시점에 재동기화되어 바뀔 수 있음)\n"
-        "- status=completed, phase=decisions_ready: decision_cards 포함 최종 반영\n"
+        "- phase=summary_ready: analysis_result.overall_analysis까지 사용 가능\n"
+        "  (주의: application_titles는 completed 시점에 재동기화되어 바뀔 수 있음)\n"
+        "- status=completed, phase=applications_ready: applications 포함 최종 반영\n"
         "- status=failed: error 기준으로 재시도/장애 처리\n\n"
-        f"{SPRING_DECISION_FAQ}"
+        f"{SPRING_APPLICATION_FAQ}"
     ),
     responses={
         200: {
@@ -414,9 +414,9 @@ async def create_transcribe_decision_run(
         },
     },
 )
-async def get_transcribe_decision_run(
+async def get_transcribe_application_run(
     run_id: str,
-) -> ApiResponse[TranscribeDecisionRunStatus]:
+) -> ApiResponse[TranscribeAnalysisRunStatus]:
     # run_id 기준으로 비동기 실행 상태/중간결과/최종결과 조회
     status = await get_run_status(run_id)
     if not status:
