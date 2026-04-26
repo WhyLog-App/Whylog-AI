@@ -7,14 +7,15 @@ from starlette.background import BackgroundTasks
 from app.core.errors import AppServiceError
 from app.domains.commit.router import analyze_commit
 from app.domains.commit.schemas import (
+    ApplicationCommitMatchItem,
+    ApplicationCommitMatchRequest,
+    ApplicationCommitMatchResponse,
     ChangedFile,
     CommitAnalyzeRequest,
-    DecisionCommitMatchRequest,
-    DecisionCommitMatchResponse,
 )
 from app.domains.commit.services.matching import (
-    _to_decision_entries,
-    match_decisions_with_commits,
+    _to_application_entries,
+    match_applications_with_commits,
 )
 from app.domains.commit.services.summarize import generate_embedding_text
 from app.main import app
@@ -28,30 +29,48 @@ def _build_match_payload() -> dict:
     }
 
 
-class TestDecisionCommitMatchingService:
-    def test_decision_entries_accept_chroma_numpy_embeddings(self):
+class TestApplicationCommitMatchingService:
+    def test_application_entries_accept_chroma_numpy_embeddings(self):
         np = pytest.importorskip("numpy")
         raw = {
-            "ids": ["meeting-123_card0_item0"],
+            "ids": ["meeting-123_application0"],
             "documents": ["title: Redis 도입 | text: 적용사항: redis 도입"],
             "metadatas": [
                 {
-                    "decision_title": "Redis 도입",
-                    "applied_item": "redis 도입",
+                    "application_id": 101,
+                    "application_title": "redis 도입",
                 }
             ],
             "embeddings": np.array([[0.1, 0.2, 0.3]]),
         }
 
-        entries = _to_decision_entries(raw)
+        entries = _to_application_entries(raw)
 
         assert entries[0].embedding == [0.1, 0.2, 0.3]
+        assert entries[0].application_id == 101
+
+    def test_application_entries_missing_application_id_returns_none(self):
+        raw = {
+            "ids": ["meeting-123_application0"],
+            "documents": ["title: Redis 도입 | text: 적용사항: redis 도입"],
+            "metadatas": [
+                {
+                    "application_id": "",
+                    "application_title": "redis 도입",
+                }
+            ],
+            "embeddings": [[0.1, 0.2, 0.3]],
+        }
+
+        entries = _to_application_entries(raw)
+
+        assert entries[0].application_id is None
 
     @pytest.mark.asyncio
     async def test_returns_recommended_commits_sorted_by_confidence(self):
-        decision_collection = MagicMock()
-        decision_collection.get.return_value = {
-            "ids": ["meeting-123_card0_item0"],
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0"],
             "documents": [
                 (
                     "title: 알림 시스템 개선 | text: 적용사항: "
@@ -61,8 +80,8 @@ class TestDecisionCommitMatchingService:
             ],
             "metadatas": [
                 {
-                    "decision_title": "알림 시스템 개선",
-                    "applied_item": "notification queue redis kafka rabbitmq 도입",
+                    "application_id": 101,
+                    "application_title": "notification queue redis kafka rabbitmq 도입",
                 }
             ],
             "embeddings": [[0.11, 0.22, 0.33]],
@@ -74,18 +93,18 @@ class TestDecisionCommitMatchingService:
             "documents": [
                 [
                     (
-                        "title: whylog/web feat | text: 변경요약: redis queue 도입 "
+                        "title: repository-1 feat | text: 변경요약: redis queue 도입 "
                         "| 기술키워드: redis,kafka,rabbitmq | 변경방향: add "
                         "| 파일맥락: notification,queue"
                     ),
                     (
-                        "title: whylog/web feat | text: 변경요약: "
+                        "title: repository-1 feat | text: 변경요약: "
                         "redis kafka 설정 추가 "
                         "| 기술키워드: redis,kafka | 변경방향: add "
                         "| 파일맥락: notification,queue"
                     ),
                     (
-                        "title: whylog/web fix | text: 변경요약: billing 버그 수정 "
+                        "title: repository-1 fix | text: 변경요약: billing 버그 수정 "
                         "| 기술키워드: billing | 변경방향: modify | 파일맥락: billing"
                     ),
                 ]
@@ -130,21 +149,22 @@ class TestDecisionCommitMatchingService:
 
         with (
             patch(
-                "app.domains.commit.services.matching.get_decision_collection",
-                return_value=decision_collection,
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
             ),
             patch(
                 "app.domains.commit.services.matching.get_commit_collection",
                 return_value=commit_collection,
             ),
         ):
-            result = await match_decisions_with_commits(
-                DecisionCommitMatchRequest(**_build_match_payload())
+            result = await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**_build_match_payload())
             )
 
-        assert result.total_decision_items == 1
-        assert result.matched_decision_items == 1
-        item = result.decisions[0]
+        assert result.total_applications == 1
+        assert result.matched_applications == 1
+        item = result.applications[0]
+        assert item.application_id == 101
         assert len(item.recommended_commits) == 2
         assert item.recommended_commits[0].commit_id == 1
         assert item.recommended_commits[0].commit_hash == "h1"
@@ -159,20 +179,59 @@ class TestDecisionCommitMatchingService:
             item.recommended_commits[1].confidence
         )
         commit_collection.query.assert_called_once()
-        assert commit_collection.query.call_args.kwargs["where"] == {"repository_id": 1}
+        assert commit_collection.query.call_args.kwargs["where"] == {
+            "repository_id": 1
+        }
+
+    @pytest.mark.asyncio
+    async def test_repository_none_queries_without_where_filter(self):
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0"],
+            "documents": ["title: Redis 도입 | text: 적용사항: redis 도입"],
+            "metadatas": [{"application_title": "redis 도입"}],
+            "embeddings": [[0.1, 0.2]],
+        }
+
+        commit_collection = MagicMock()
+        commit_collection.query.return_value = {
+            "ids": [[]],
+            "documents": [[]],
+            "metadatas": [[]],
+            "distances": [[]],
+        }
+
+        payload = _build_match_payload()
+        payload["repository_id"] = None
+
+        with (
+            patch(
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
+            ),
+            patch(
+                "app.domains.commit.services.matching.get_commit_collection",
+                return_value=commit_collection,
+            ),
+        ):
+            await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**payload)
+            )
+
+        commit_collection.query.assert_called_once()
+        assert "where" not in commit_collection.query.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_opposite_direction_candidate_is_not_matched(self):
-        decision_collection = MagicMock()
-        decision_collection.get.return_value = {
-            "ids": ["meeting-123_card0_item0"],
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0"],
             "documents": [
                 "title: Redis 제거 | text: 적용사항: notification redis 제거"
             ],
             "metadatas": [
                 {
-                    "decision_title": "Redis 제거",
-                    "applied_item": "notification redis 제거",
+                    "application_title": "notification redis 제거",
                 }
             ],
             "embeddings": [[0.1, 0.2]],
@@ -203,26 +262,26 @@ class TestDecisionCommitMatchingService:
 
         with (
             patch(
-                "app.domains.commit.services.matching.get_decision_collection",
-                return_value=decision_collection,
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
             ),
             patch(
                 "app.domains.commit.services.matching.get_commit_collection",
                 return_value=commit_collection,
             ),
         ):
-            result = await match_decisions_with_commits(
-                DecisionCommitMatchRequest(**_build_match_payload())
+            result = await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**_build_match_payload())
             )
 
-        item = result.decisions[0]
+        item = result.applications[0]
         assert item.recommended_commits == []
 
     @pytest.mark.asyncio
-    async def test_same_commit_is_removed_from_opposite_decision(self):
-        decision_collection = MagicMock()
-        decision_collection.get.return_value = {
-            "ids": ["meeting-123_card0_item0", "meeting-123_card1_item0"],
+    async def test_same_commit_is_removed_from_opposite_application(self):
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0", "meeting-123_application1"],
             "documents": [
                 (
                     "title: Redis 도입 | text: 적용사항: notification redis kafka "
@@ -235,12 +294,10 @@ class TestDecisionCommitMatchingService:
             ],
             "metadatas": [
                 {
-                    "decision_title": "Redis 도입",
-                    "applied_item": "notification redis kafka rabbitmq 도입",
+                    "application_title": "notification redis kafka rabbitmq 도입",
                 },
                 {
-                    "decision_title": "Redis 제거",
-                    "applied_item": "notification redis kafka rabbitmq 제거",
+                    "application_title": "notification redis kafka rabbitmq 제거",
                 },
             ],
             "embeddings": [[0.1, 0.2], [0.3, 0.4]],
@@ -304,38 +361,45 @@ class TestDecisionCommitMatchingService:
 
         with (
             patch(
-                "app.domains.commit.services.matching.get_decision_collection",
-                return_value=decision_collection,
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
             ),
             patch(
                 "app.domains.commit.services.matching.get_commit_collection",
                 return_value=commit_collection,
             ),
         ):
-            result = await match_decisions_with_commits(
-                DecisionCommitMatchRequest(**_build_match_payload())
+            result = await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**_build_match_payload())
             )
 
-        first_item = result.decisions[0]
-        second_item = result.decisions[1]
+        first_item = result.applications[0]
+        second_item = result.applications[1]
         assert len(first_item.recommended_commits) == 1
         assert second_item.recommended_commits == []
 
 
-class TestDecisionCommitMatchingEndpoint:
+class TestApplicationCommitMatchingEndpoint:
     client = TestClient(app)
 
     def test_match_endpoint_success(self):
-        mock_result = DecisionCommitMatchResponse(
+        mock_result = ApplicationCommitMatchResponse(
             meeting_id="meeting-123",
             repository_id=1,
-            total_decision_items=1,
-            matched_decision_items=1,
-            decisions=[],
+            total_applications=1,
+            matched_applications=1,
+            applications=[
+                ApplicationCommitMatchItem(
+                    application_id=101,
+                    application_document_id="meeting-123_application0",
+                    application_title="세션 캐시 적용",
+                    recommended_commits=[],
+                )
+            ],
         )
 
         with patch(
-            "app.domains.commit.router.match_decisions_with_commits",
+            "app.domains.commit.router.match_applications_with_commits",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -349,6 +413,8 @@ class TestDecisionCommitMatchingEndpoint:
         assert body["isSuccess"] is True
         assert body["code"] == "COMMIT_MATCH_200"
         assert body["result"]["meeting_id"] == "meeting-123"
+        assert body["result"]["repository_id"] == 1
+        assert body["result"]["applications"][0]["application_id"] == 101
 
     def test_match_endpoint_validation_error(self):
         payload = _build_match_payload()
@@ -363,7 +429,7 @@ class TestDecisionCommitMatchingEndpoint:
 
     def test_match_endpoint_service_failure(self):
         with patch(
-            "app.domains.commit.router.match_decisions_with_commits",
+            "app.domains.commit.router.match_applications_with_commits",
             new_callable=AsyncMock,
             side_effect=AppServiceError("커밋 후보 조회 실패", status_code=502),
         ):
