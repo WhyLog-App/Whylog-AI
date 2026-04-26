@@ -33,9 +33,9 @@ class MatchScoreBreakdown(BaseModel):
     total: int = Field(description="최종 신뢰도 점수(0~100)")
 
 
-class DecisionCommitMatchRequest(BaseModel):
+class ApplicationCommitMatchRequest(BaseModel):
     meeting_id: str = Field(
-        description="결정사항 임베딩을 조회할 회의 ID",
+        description="적용사항 임베딩을 조회할 회의 ID",
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
     )
     repository_id: int | None = Field(
@@ -70,22 +70,22 @@ class MatchedCommit(BaseModel):
     module_tags: list[str] = Field(default_factory=list, description="모듈/경로 태그")
 
 
-class DecisionCommitMatchItem(BaseModel):
-    decision_document_id: str = Field(description="결정사항 문서 ID")
-    decision_title: str = Field(description="결정사항 제목")
-    applied_item: str = Field(description="적용사항")
+class ApplicationCommitMatchItem(BaseModel):
+    application_id: int | None = Field(default=None, description="적용사항 ID")
+    application_document_id: str = Field(description="적용사항 문서 ID")
+    application_title: str = Field(description="적용사항 제목")
     recommended_commits: list[MatchedCommit] = Field(
         default_factory=list,
         description="신뢰도 내림차순 추천 커밋 목록",
     )
 
 
-class DecisionCommitMatchResponse(BaseModel):
+class ApplicationCommitMatchResponse(BaseModel):
     meeting_id: str = Field(description="회의 ID")
     repository_id: int | None = Field(default=None, description="레포지토리 ID 필터")
-    total_decision_items: int = Field(description="조회된 적용사항 문서 수")
-    matched_decision_items: int = Field(description="추천 결과가 존재하는 문서 수")
-    decisions: list[DecisionCommitMatchItem] = Field(
+    total_applications: int = Field(description="조회된 적용사항 문서 수")
+    matched_applications: int = Field(description="추천 결과가 존재하는 적용사항 수")
+    applications: list[ApplicationCommitMatchItem] = Field(
         default_factory=list, description="적용사항 단위 매칭 결과"
     )
     notice: str = Field(

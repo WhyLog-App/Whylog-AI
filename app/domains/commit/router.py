@@ -3,13 +3,13 @@ from fastapi import APIRouter, BackgroundTasks
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.commit.schemas import (
+    ApplicationCommitMatchRequest,
+    ApplicationCommitMatchResponse,
     CommitAnalyzeRequest,
     CommitAnalyzeResponse,
-    DecisionCommitMatchRequest,
-    DecisionCommitMatchResponse,
 )
 from app.domains.commit.services.diff_filter import filter_changed_files
-from app.domains.commit.services.matching import match_decisions_with_commits
+from app.domains.commit.services.matching import match_applications_with_commits
 from app.domains.commit.services.summarize import (
     generate_embedding_text,
     summarize_commit,
@@ -80,18 +80,18 @@ async def analyze_commit(
 
 @router.post(
     "/match",
-    response_model=ApiResponse[DecisionCommitMatchResponse],
-    summary="결정사항-커밋 추천 매칭",
+    response_model=ApiResponse[ApplicationCommitMatchResponse],
+    summary="적용사항-커밋 추천 매칭",
     description=(
-        "회의 결정사항(applied_item 단위)과 "
+        "회의 적용사항(application 단위)에 대해 "
         "커밋 임베딩 후보를 유사도 기반으로 추천합니다.\n\n"
         "점수 정책(100점):\n"
         "- 의미 유사성 50\n"
         "- 기술 키워드 일치도 30\n"
         "- 파일/모듈 맥락 일치도 20\n"
         "- 반대 의미(도입 vs 제거)는 semantic 0 처리\n"
-        "- 추상 커밋/모호한 결정사항은 보정 감점\n\n"
-        "응답은 결정사항별 추천 커밋을 신뢰도 내림차순으로 반환합니다.\n"
+        "- 추상 커밋/모호한 적용사항은 보정 감점\n\n"
+        "응답은 적용사항별 추천 커밋을 신뢰도 내림차순으로 반환합니다.\n"
         "사용자 연결 상태는 Spring 서버에서 별도로 관리합니다."
     ),
     responses={
@@ -105,12 +105,12 @@ async def analyze_commit(
         },
     },
 )
-async def match_decision_commits(
-    request: DecisionCommitMatchRequest,
-) -> ApiResponse[DecisionCommitMatchResponse]:
-    result = await match_decisions_with_commits(request)
+async def match_application_commits(
+    request: ApplicationCommitMatchRequest,
+) -> ApiResponse[ApplicationCommitMatchResponse]:
+    result = await match_applications_with_commits(request)
     return ok_response(
         result=result,
         code="COMMIT_MATCH_200",
-        message="결정사항-커밋 추천 분석이 완료되었습니다.",
+        message="적용사항-커밋 추천 분석이 완료되었습니다.",
     )
