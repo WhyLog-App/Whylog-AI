@@ -11,9 +11,9 @@ class CommitAnalyzeRequest(BaseModel):
     commit_hash: str | None = Field(
         default=None,
         pattern=r"^[a-fA-F0-9]{7,64}$",
-        description="Git 커밋 해시",
+        description="Git 커밋 해시(Spring commit detail의 hash를 commit_hash로 전달)",
     )
-    repository_id: int = Field(ge=0, description="레포지토리 ID")
+    repository_id: int = Field(ge=0, description="Spring 레포지토리 ID")
     message: str = Field(min_length=1, description="커밋 메시지")
     changed_file_list: list[ChangedFile] = Field(
         min_length=1, description="변경된 파일 목록"
@@ -53,10 +53,13 @@ class ApplicationCommitMatchRequest(BaseModel):
 
 class MatchedCommit(BaseModel):
     commit_id: int | None = Field(default=None, description="커밋 ID")
-    commit_ref: str | None = Field(default=None, description="커밋 참조 ID")
+    commit_ref: str | None = Field(
+        default=None,
+        description="AI/Chroma 내부 보조 참조값(null 가능, 저장 키로 사용하지 않음)",
+    )
     commit_hash: str | None = Field(default=None, description="커밋 해시")
     commit_message: str | None = Field(default=None, description="커밋 메시지")
-    repository_id: int | None = Field(default=None, description="레포지토리 ID")
+    repository_id: int | None = Field(default=None, description="Spring 레포지토리 ID")
     confidence: int = Field(description="신뢰도 점수(0~100)")
     reason: str = Field(description="추천 사유 요약")
     score_breakdown: MatchScoreBreakdown = Field(description="점수 구성 상세")
@@ -71,7 +74,10 @@ class MatchedCommit(BaseModel):
 
 
 class ApplicationCommitMatchItem(BaseModel):
-    application_id: int | None = Field(default=None, description="적용사항 ID")
+    application_id: int | None = Field(
+        default=None,
+        description="Spring 적용사항 ID. 임베딩 요청에 없으면 매칭 응답에서도 null",
+    )
     application_document_id: str = Field(description="적용사항 문서 ID")
     application_title: str = Field(description="적용사항 제목")
     recommended_commits: list[MatchedCommit] = Field(
