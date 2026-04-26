@@ -14,7 +14,6 @@ from app.domains.commit.schemas import (
 )
 from app.domains.decision.services.matching_scoring import (
     ScoringInput,
-    build_connection_reason,
     calculate_match_score,
     extract_direction_labels_from_text,
     extract_module_tokens,
@@ -66,6 +65,41 @@ def _csv_to_list(value: str | None) -> list[str]:
     if not value:
         return []
     return [token for token in (part.strip() for part in value.split(",")) if token]
+
+
+def _format_tokens(tokens: set[str], *, limit: int = 3) -> str:
+    if not tokens:
+        return "없음"
+    sorted_tokens = sorted(tokens)
+    shown = sorted_tokens[:limit]
+    suffix = (
+        "" if len(sorted_tokens) <= limit else f" 외 {len(sorted_tokens) - limit}개"
+    )
+    return ", ".join(shown) + suffix
+
+
+def _build_recommendation_reason(
+    *,
+    score: Any,
+    decision_keywords: set[str],
+    commit_keywords: set[str],
+    decision_modules: set[str],
+    commit_modules: set[str],
+) -> str:
+    keyword_overlap = decision_keywords & commit_keywords
+    module_overlap = decision_modules & commit_modules
+
+    parts = [
+        (
+            f"총 {score.total}점: 의미 {score.semantic}/50, "
+            f"키워드 {score.keyword}/30, 맥락 {score.context}/20"
+        )
+    ]
+    if score.penalty:
+        parts.append(f"보정 감점 {score.penalty}점")
+    parts.append(f"겹친 키워드: {_format_tokens(keyword_overlap)}")
+    parts.append(f"겹친 모듈: {_format_tokens(module_overlap)}")
+    return ". ".join(parts) + "."
 
 
 def _to_float_list(value: Any) -> list[float] | None:
@@ -196,14 +230,21 @@ async def _query_commit_candidates(
     query_embedding: list[float],
     *,
     n_results: int,
+    repository_id: int | None,
 ) -> dict[str, Any]:
     collection = get_commit_collection()
+    query_kwargs: dict[str, Any] = {
+        "query_embeddings": [query_embedding],
+        "n_results": n_results,
+        "include": ["documents", "metadatas", "distances"],
+    }
+    if repository_id is not None:
+        query_kwargs["where"] = {"repository_id": repository_id}
+
     try:
         return await asyncio.to_thread(
             collection.query,
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            include=["documents", "metadatas", "distances"],
+            **query_kwargs,
         )
     except Exception as e:
         raise AppServiceError(
@@ -224,7 +265,8 @@ def _build_match_record(
     stored_commit_id = _first_int(metadata.get("commit_id"))
     commit_ref = _first_str(metadata.get("commit_ref"))
     commit_hash = _first_str(metadata.get("commit_hash"))
-    repository = _first_str(metadata.get("repository"))
+    commit_message = _first_str(metadata.get("commit_message")) or commit_document
+    repository_id = _first_int(metadata.get("repository_id"))
 
     direction_primary = _first_str(metadata.get("direction_primary")) or _first_str(
         metadata.get("direction")
@@ -256,9 +298,7 @@ def _build_match_record(
             semantic_distance=_normalize_distance(distance),
             decision_text=decision.text,
             commit_text=commit_document,
-            commit_message=(
-                _first_str(metadata.get("commit_message")) or commit_document
-            ),
+            commit_message=commit_message,
             decision_direction_labels=decision.direction_labels,
             commit_direction_labels=commit_direction_labels,
             decision_keywords=decision.keywords,
@@ -275,10 +315,16 @@ def _build_match_record(
         commit_id=stored_commit_id,
         commit_ref=commit_ref,
         commit_hash=commit_hash,
-        repository=repository,
-        status=score.status,
+        commit_message=commit_message,
+        repository_id=repository_id,
         confidence=score.total,
-        reason=build_connection_reason(score),
+        reason=_build_recommendation_reason(
+            score=score,
+            decision_keywords=decision.keywords,
+            commit_keywords=commit_keywords,
+            decision_modules=decision.modules,
+            commit_modules=commit_modules,
+        ),
         score_breakdown=MatchScoreBreakdown(
             semantic=score.semantic,
             keyword=score.keyword,
@@ -307,7 +353,7 @@ async def match_decisions_with_commits(
     if not decision_entries:
         return DecisionCommitMatchResponse(
             meeting_id=payload.meeting_id,
-            repository=payload.repository,
+            repository_id=payload.repository_id,
             total_decision_items=0,
             matched_decision_items=0,
             decisions=[],
@@ -329,6 +375,7 @@ async def match_decisions_with_commits(
         query_result = await _query_commit_candidates(
             decision.embedding,
             n_results=pool_size,
+            repository_id=payload.repository_id,
         )
 
         ids_nested = query_result.get("ids") or [[]]
@@ -343,9 +390,12 @@ async def match_decisions_with_commits(
 
         for idx, commit_id in enumerate(ids):
             metadata = metadatas[idx] if idx < len(metadatas) and metadatas[idx] else {}
-            commit_repository = _first_str(metadata.get("repository"))
+            commit_repository_id = _first_int(metadata.get("repository_id"))
 
-            if payload.repository and commit_repository != payload.repository:
+            if (
+                payload.repository_id is not None
+                and commit_repository_id != payload.repository_id
+            ):
                 continue
 
             commit_document = docs[idx] if idx < len(docs) and docs[idx] else ""
@@ -391,40 +441,23 @@ async def match_decisions_with_commits(
             reverse=True,
         )[: payload.top_k]
 
-        connected_commits = [
-            record.commit
-            for record in sorted_records
-            if record.commit.status == "APPLIED"
-        ]
-        recommended_commits = [
-            record.commit
-            for record in sorted_records
-            if record.commit.status == "PARTIAL"
-        ]
+        recommended_commits = [record.commit for record in sorted_records]
 
-        if connected_commits:
-            decision_status = "APPLIED"
+        if recommended_commits:
             matched_decision_items += 1
-        elif recommended_commits:
-            decision_status = "PARTIAL"
-            matched_decision_items += 1
-        else:
-            decision_status = "UNAPPLIED"
 
         decision_items.append(
             DecisionCommitMatchItem(
                 decision_document_id=entry.document_id,
                 decision_title=entry.decision_title,
                 applied_item=entry.applied_item,
-                decision_status=decision_status,
-                connected_commits=connected_commits,
                 recommended_commits=recommended_commits,
             )
         )
 
     return DecisionCommitMatchResponse(
         meeting_id=payload.meeting_id,
-        repository=payload.repository,
+        repository_id=payload.repository_id,
         total_decision_items=len(decision_entries),
         matched_decision_items=matched_decision_items,
         decisions=decision_items,
