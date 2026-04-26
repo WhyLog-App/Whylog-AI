@@ -1,1 +1,1 @@
-"""Decision domain."""
+"""Meeting analysis and application domain."""

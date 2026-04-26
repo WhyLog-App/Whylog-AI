@@ -4,24 +4,24 @@ from fastapi import APIRouter, Body
 
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.decision.schemas import (
-    DecisionEmbeddingRequest,
-    DecisionEmbeddingResponse,
-    DecisionExtractRequest,
-    DecisionExtractResponse,
+    ApplicationEmbeddingRequest,
+    ApplicationEmbeddingResponse,
+    MeetingAnalysisRequest,
+    MeetingAnalysisResponse,
 )
-from app.domains.decision.services.embedding import embed_and_store_decisions
-from app.domains.decision.services.extraction import extract_decisions
+from app.domains.decision.services.embedding import embed_and_store_applications
+from app.domains.decision.services.extraction import extract_meeting_analysis
 
-router = APIRouter(prefix="/decisions", tags=["decision"])
+router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
 
 
 @router.post(
     "/extract",
-    response_model=ApiResponse[DecisionExtractResponse],
-    summary="전사 세그먼트 기반 의사결정 재추출",
+    response_model=ApiResponse[MeetingAnalysisResponse],
+    summary="전사 세그먼트 기반 회의 분석 재추출",
     description=(
         "저장된 transcript_segments(JSON)만으로 "
-        "의사결정 결과를 추출합니다. "
+        "회의 분석 결과와 적용사항 목록을 추출합니다. "
         "오디오 재업로드 없이 프롬프트 변경 실험, "
         "실패 재시도, 운영 재처리에 사용합니다.\n\n"
         "팀 공유 FAQ:\n"
@@ -44,14 +44,14 @@ router = APIRouter(prefix="/decisions", tags=["decision"])
         },
     },
 )
-async def extract_decisions_from_transcript(
+async def extract_meeting_analysis_from_transcript(
     payload: Annotated[
-        DecisionExtractRequest,
+        MeetingAnalysisRequest,
         Body(
             description=(
                 "Spring 연동 가이드:\n"
                 "- 본 API는 오디오 업로드 없이, 이미 저장된 transcript_segments로 "
-                "의사결정을 재추출/재시도할 때 사용합니다.\n"
+                "회의 분석 결과와 적용사항을 재추출/재시도할 때 사용합니다.\n"
                 "- 요청 본문은 반드시 객체형(JSON object)이며 "
                 "transcript_segments 필드를 포함해야 합니다.\n"
                 "- meeting_id/project_id는 선택이며, "
@@ -82,31 +82,31 @@ async def extract_decisions_from_transcript(
             },
         ),
     ],
-) -> ApiResponse[DecisionExtractResponse]:
-    # 전달받은 전사 세그먼트로 의사결정 결과를 재추출
-    decision_result = await extract_decisions(payload.transcript_segments)
+) -> ApiResponse[MeetingAnalysisResponse]:
+    # 전달받은 전사 세그먼트로 회의 분석 결과를 재추출
+    analysis_result = await extract_meeting_analysis(payload.transcript_segments)
 
     return ok_response(
-        DecisionExtractResponse(
+        MeetingAnalysisResponse(
             meeting_id=payload.meeting_id,
             project_id=payload.project_id,
-            decision_result=decision_result,
+            analysis_result=analysis_result,
         ),
-        code="DECISION_200",
-        message="의사결정 재추출이 완료되었습니다.",
+        code="MEETING_ANALYSIS_200",
+        message="회의 분석 재추출이 완료되었습니다.",
     )
 
 
 @router.post(
     "/embeddings",
-    response_model=ApiResponse[DecisionEmbeddingResponse],
-    summary="결정사항 임베딩 생성 및 ChromaDB 저장",
+    response_model=ApiResponse[ApplicationEmbeddingResponse],
+    summary="적용사항 임베딩 생성 및 ChromaDB 저장",
     description=(
-        "의사결정 추출 결과(decision_cards)를 applied_item 단위로 정규화한 뒤, "
+        "회의 분석 결과(applications)를 application 단위로 정규화한 뒤, "
         "Gemini Embedding API로 벡터를 생성하고 ChromaDB에 저장합니다.\n\n"
         "- 동일 meeting_id로 재호출 시 기존 문서를 삭제 후 새로 저장합니다.\n"
-        "- 문서 ID 형식: `{meeting_id}_card{i}_item{j}`\n"
-        "- 임베딩 텍스트: `title: 제목 | text: 적용사항: 항목 | 근거: 핵심근거`"
+        "- 문서 ID 형식: `{meeting_id}_application{i}`\n"
+        "- 임베딩 텍스트: `title: 제목 | text: 적용사항: 제목 | 근거: 핵심근거`"
     ),
     responses={
         422: {
@@ -123,24 +123,20 @@ async def extract_decisions_from_transcript(
         },
     },
 )
-async def create_decision_embeddings(
+async def create_application_embeddings(
     payload: Annotated[
-        DecisionEmbeddingRequest,
+        ApplicationEmbeddingRequest,
         Body(
             examples={
                 "minimal": {
                     "summary": "최소 요청 예시",
                     "value": {
                         "meeting_id": "meeting-123",
-                        "decision_result": {
-                            "decision_cards": [
+                        "analysis_result": {
+                            "applications": [
                                 {
-                                    "decision_title": "Redis 캐시 도입",
-                                    "applied_items": [
-                                        "사용자 세션 캐싱 적용",
-                                        "API 응답 캐싱 적용",
-                                    ],
-                                    "decision_reasons": [
+                                    "application_title": "사용자 세션 캐싱 적용",
+                                    "application_reasons": [
                                         "DB 부하를 줄여 응답 속도를 개선한다.",
                                     ],
                                     "timeline": [],
@@ -153,21 +149,21 @@ async def create_decision_embeddings(
             },
         ),
     ],
-) -> ApiResponse[DecisionEmbeddingResponse]:
-    documents = await embed_and_store_decisions(
+) -> ApiResponse[ApplicationEmbeddingResponse]:
+    documents = await embed_and_store_applications(
         meeting_id=payload.meeting_id,
         project_id=payload.project_id,
-        decision_result=payload.decision_result,
+        analysis_result=payload.analysis_result,
     )
 
     return ok_response(
-        DecisionEmbeddingResponse(
+        ApplicationEmbeddingResponse(
             meeting_id=payload.meeting_id,
             project_id=payload.project_id,
             total_documents=len(documents),
             document_ids=[doc.document_id for doc in documents],
             documents=documents,
         ),
-        code="DECISION_EMBEDDING_200",
-        message="결정사항 임베딩이 생성 및 저장되었습니다.",
+        code="APPLICATION_EMBEDDING_200",
+        message="적용사항 임베딩이 생성 및 저장되었습니다.",
     )
