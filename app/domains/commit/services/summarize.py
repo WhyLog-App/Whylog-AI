@@ -158,7 +158,7 @@ async def _generate_embedding(text: str, timeout: float = 30.0) -> list[float]:
         try:
             response = await asyncio.wait_for(
                 client.aio.models.embed_content(
-                    model=settings.decision_embedding_model,
+                    model=settings.embedding_model,
                     contents=text,
                 ),
                 timeout=timeout,
