@@ -9,29 +9,29 @@ class MeetingInfo(BaseModel):
     duration: str = Field(default="", description="회의 길이/시간")
 
 
-class OverallAnalysis(BaseModel):
+class MeetingAnalysis(BaseModel):
     meeting_info: MeetingInfo = Field(default_factory=MeetingInfo)
     topics: list[str] = Field(default_factory=list, description="논의된 주제 목록")
     core_context: list[str] = Field(
         default_factory=list, description="프로젝트 배경/제약 컨텍스트"
     )
-    final_decisions_list: list[str] = Field(
+    application_titles: list[str] = Field(
         default_factory=list,
         description=(
-            "최종 결정사항 제목 목록. "
+            "회의에서 도출된 적용사항 제목 목록. "
             "비동기 실행의 summary_ready 단계에서는 임시값일 수 있으며, "
-            "completed 단계에서 decision_cards 기준으로 재동기화될 수 있습니다."
+            "completed 단계에서 applications 기준으로 재동기화될 수 있습니다."
         ),
     )
-    all_decision_reasons: list[str] = Field(
+    application_reasons: list[str] = Field(
         default_factory=list,
-        description="결정 근거 통합 목록(문장 단위)",
+        description="적용사항 근거 통합 목록(문장 단위)",
     )
 
 
-class DecisionTimelineItem(BaseModel):
+class ApplicationTimelineItem(BaseModel):
     timestamp: str = Field(description="해당 단계 시각(HH:MM:SS)")
-    step: str = Field(description="이슈제기/대안논의/최종합의")
+    step: str = Field(description="이슈제기/대안논의/적용합의")
     speaker_id: str | None = Field(
         default=None,
         description=(
@@ -45,32 +45,35 @@ class DecisionTimelineItem(BaseModel):
     utterance: str = Field(description="실제 발화 원문")
 
 
-class DecisionCard(BaseModel):
-    decision_title: str = Field(description="결정사항 제목")
-    applied_items: list[str] = Field(default_factory=list, description="액션 아이템")
-    decision_reasons: list[str] = Field(
-        default_factory=list,
-        description="해당 결정의 근거 목록(1근거=1문장)",
+class Application(BaseModel):
+    application_id: int | None = Field(
+        default=None,
+        description="호출 측(예: Spring)에서 관리하는 적용사항 ID",
     )
-    timeline: list[DecisionTimelineItem] = Field(
+    application_title: str = Field(description="적용사항 제목")
+    application_reasons: list[str] = Field(
         default_factory=list,
-        description="결정 타임라인(이슈제기→대안논의→최종합의)",
+        description="해당 적용사항의 근거 목록(1근거=1문장)",
+    )
+    timeline: list[ApplicationTimelineItem] = Field(
+        default_factory=list,
+        description="적용사항 도출 타임라인(이슈제기→대안논의→적용합의)",
     )
 
 
-class DecisionExtractionResult(BaseModel):
-    overall_analysis: OverallAnalysis = Field(default_factory=OverallAnalysis)
-    decision_cards: list[DecisionCard] = Field(
+class MeetingAnalysisResult(BaseModel):
+    overall_analysis: MeetingAnalysis = Field(default_factory=MeetingAnalysis)
+    applications: list[Application] = Field(
         default_factory=list,
-        description="결정사항 카드 목록",
+        description="회의에서 도출된 적용사항 목록",
     )
     other_mentions: list[str] = Field(
         default_factory=list,
-        description="결정으로 확정되지 않은 기술 제언/추가 과제",
+        description="적용사항으로 확정되지 않은 기술 제언/추가 과제",
     )
 
 
-class DecisionExtractRequest(BaseModel):
+class MeetingAnalysisRequest(BaseModel):
     meeting_id: str | None = Field(
         default=None,
         description="호출 측(예: Spring)에서 관리하는 회의 ID(선택)",
@@ -82,13 +85,13 @@ class DecisionExtractRequest(BaseModel):
     transcript_segments: list[TranscribeSegment] = Field(
         description=(
             "후처리 완료 전사 세그먼트 배열. "
-            "원칙적으로 /api/transcribe 또는 /api/transcribe/decisions 계열에서 "
+            "원칙적으로 /api/transcribe 또는 /api/transcribe/applications 계열에서 "
             "생성된 포맷을 그대로 전달하는 것을 권장합니다."
         )
     )
 
 
-class DecisionExtractResponse(BaseModel):
+class MeetingAnalysisResponse(BaseModel):
     meeting_id: str | None = Field(
         default=None,
         description="요청에서 전달받은 meeting_id echo",
@@ -97,20 +100,20 @@ class DecisionExtractResponse(BaseModel):
         default=None,
         description="요청에서 전달받은 project_id echo",
     )
-    decision_result: DecisionExtractionResult
+    analysis_result: MeetingAnalysisResult
 
 
-# ── Decision Embedding DTO ──
+# ── Application Embedding DTO ──
 
 
 class EmbeddedDocument(BaseModel):
     document_id: str = Field(description="ChromaDB 문서 ID")
     text: str = Field(description="임베딩에 사용된 정규화 텍스트")
-    decision_title: str = Field(description="원본 결정사항 제목")
-    applied_item: str = Field(description="원본 적용사항")
+    application_id: int | None = Field(default=None, description="원본 적용사항 ID")
+    application_title: str = Field(description="원본 적용사항 제목")
 
 
-class DecisionEmbeddingRequest(BaseModel):
+class ApplicationEmbeddingRequest(BaseModel):
     meeting_id: str = Field(
         description="회의 ID (필수)",
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
@@ -119,12 +122,12 @@ class DecisionEmbeddingRequest(BaseModel):
         default=None,
         description="프로젝트 ID (선택)",
     )
-    decision_result: DecisionExtractionResult = Field(
-        description="의사결정 추출 결과 (decision_cards 포함)",
+    analysis_result: MeetingAnalysisResult = Field(
+        description="회의 분석 결과(applications 포함)",
     )
 
 
-class DecisionEmbeddingResponse(BaseModel):
+class ApplicationEmbeddingResponse(BaseModel):
     meeting_id: str = Field(description="처리된 회의 ID")
     project_id: str | None = Field(default=None, description="프로젝트 ID")
     total_documents: int = Field(description="저장된 문서 수")
