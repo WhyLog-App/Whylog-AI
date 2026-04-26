@@ -54,8 +54,11 @@ SPRING_ASYNC_GUIDE = (
     "요약 화면을 고도화할 수 있습니다.\n"
     "5) status=completed && phase=applications_ready 시 "
     "applications 포함 최종 결과를 저장/전파합니다.\n"
-    "6) status=failed 시 error를 기록하고 필요 시 재시도를 수행합니다.\n"
-    "7) run 조회 404는 만료/정리/재기동 유실 가능성이 있으므로 "
+    "6) 최종 applications[].application_id는 null이 정상입니다. "
+    "Spring이 적용사항 저장 후 발급한 applicationId를 "
+    "/api/meeting-analysis/embeddings 요청의 application_id로 다시 전달합니다.\n"
+    "7) status=failed 시 error를 기록하고 필요 시 재시도를 수행합니다.\n"
+    "8) run 조회 404는 만료/정리/재기동 유실 가능성이 있으므로 "
     "재요청 정책을 둡니다."
 )
 SPRING_APPLICATION_FAQ = (
@@ -178,6 +181,86 @@ async def _run_transcribe_application_run(
         "/api/transcribe/applications/runs(비동기)를 사용하세요."
     ),
     responses={
+        200: {
+            "description": "전사, 후처리, 회의 분석/적용사항 추출 성공.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "TRANSCRIBE_200",
+                        "message": (
+                            "전사, 후처리, 회의 분석/적용사항 추출이 완료되었습니다."
+                        ),
+                        "result": {
+                            "meeting_id": "meeting-123",
+                            "project_id": "project-abc",
+                            "transcript_segments": [
+                                {
+                                    "message_id": 1,
+                                    "speaker": "Speaker 0",
+                                    "start_time": "00:00:00",
+                                    "end_time": "00:00:04",
+                                    "text": "Swagger 에러 응답 예시가 부족합니다.",
+                                    "is_final": True,
+                                }
+                            ],
+                            "analysis_result": {
+                                "overall_analysis": {
+                                    "meeting_info": {
+                                        "title": "API 문서화 개선 회의",
+                                        "purpose": "Swagger 에러 응답 예시 개선",
+                                        "duration": "00:12:30",
+                                    },
+                                    "topics": ["Swagger 에러 응답 문서화"],
+                                    "core_context": [
+                                        "프론트에서 에러 응답 형식을 예측하기 어렵다."
+                                    ],
+                                    "application_titles": [
+                                        "Swagger 에러 응답 예시 문서화"
+                                    ],
+                                    "application_reasons": [
+                                        (
+                                            "API 사용자가 에러 응답 형식을 "
+                                            "쉽게 확인해야 한다."
+                                        )
+                                    ],
+                                },
+                                "applications": [
+                                    {
+                                        "application_id": None,
+                                        "application_title": (
+                                            "Swagger 에러 응답 예시 문서화"
+                                        ),
+                                        "application_reasons": [
+                                            (
+                                                "API 사용자가 에러 응답 형식을 "
+                                                "쉽게 확인해야 한다."
+                                            )
+                                        ],
+                                        "timeline": [
+                                            {
+                                                "timestamp": "00:09:40",
+                                                "step": "적용합의",
+                                                "speaker_id": "Speaker 0",
+                                                "content": (
+                                                    "ApiErrorCodeExample 어노테이션을 "
+                                                    "추가하기로 합의함"
+                                                ),
+                                                "utterance": (
+                                                    "그럼 ApiErrorCodeExample을 "
+                                                    "추가하는 걸로 하죠."
+                                                ),
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "other_mentions": [],
+                            },
+                        },
+                    }
+                }
+            },
+        },
         413: {
             "model": ApiErrorResponse,
             "description": "파일 크기가 100MB를 초과했습니다.",
@@ -319,6 +402,22 @@ async def transcribe_and_extract_applications(
     responses={
         202: {
             "description": "비동기 작업이 접수되었습니다.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "TRANSCRIBE_202",
+                        "message": "비동기 실행이 접수되었습니다.",
+                        "result": {
+                            "run_id": "550e8400-e29b-41d4-a716-446655440000",
+                            "status": "queued",
+                            "phase": "queued",
+                            "meeting_id": "meeting-123",
+                            "project_id": "project-abc",
+                        },
+                    }
+                }
+            },
         },
         413: {
             "model": ApiErrorResponse,
@@ -397,6 +496,124 @@ async def create_transcribe_application_run(
     responses={
         200: {
             "description": "현재 실행 상태 또는 중간/최종 결과.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "TRANSCRIBE_200",
+                        "message": "비동기 실행 상태 조회에 성공했습니다.",
+                        "result": {
+                            "run_id": "550e8400-e29b-41d4-a716-446655440000",
+                            "status": "completed",
+                            "phase": "applications_ready",
+                            "meeting_id": "meeting-123",
+                            "project_id": "project-abc",
+                            "submitted_at": "2026-04-27T09:00:00Z",
+                            "started_at": "2026-04-27T09:00:02Z",
+                            "finished_at": "2026-04-27T09:00:40Z",
+                            "error": None,
+                            "result": {
+                                "meeting_id": "meeting-123",
+                                "project_id": "project-abc",
+                                "transcript_segments": [
+                                    {
+                                        "message_id": 1,
+                                        "speaker": "Speaker 0",
+                                        "start_time": "00:00:00",
+                                        "end_time": "00:00:04",
+                                        "text": (
+                                            "Swagger 에러 응답 예시가 부족합니다."
+                                        ),
+                                        "is_final": True,
+                                    }
+                                ],
+                                "analysis_result": {
+                                    "overall_analysis": {
+                                        "meeting_info": {
+                                            "title": "API 문서화 개선 회의",
+                                            "purpose": ("Swagger 에러 응답 예시 개선"),
+                                            "duration": "00:12:30",
+                                        },
+                                        "topics": ["Swagger 에러 응답 문서화"],
+                                        "core_context": [
+                                            (
+                                                "프론트에서 에러 응답 형식을 "
+                                                "예측하기 어렵다."
+                                            )
+                                        ],
+                                        "application_titles": [
+                                            "Swagger 에러 응답 예시 문서화"
+                                        ],
+                                        "application_reasons": [
+                                            (
+                                                "API 사용자가 에러 응답 형식을 "
+                                                "쉽게 확인해야 한다."
+                                            )
+                                        ],
+                                    },
+                                    "applications": [
+                                        {
+                                            "application_id": None,
+                                            "application_title": (
+                                                "Swagger 에러 응답 예시 문서화"
+                                            ),
+                                            "application_reasons": [
+                                                (
+                                                    "API 사용자가 에러 응답 형식을 "
+                                                    "쉽게 확인해야 한다."
+                                                )
+                                            ],
+                                            "timeline": [
+                                                {
+                                                    "timestamp": "00:03:12",
+                                                    "step": "이슈제기",
+                                                    "speaker_id": "Speaker 0",
+                                                    "content": (
+                                                        "Swagger에서 에러 응답 예시가 "
+                                                        "부족하다는 문제가 제기됨"
+                                                    ),
+                                                    "utterance": (
+                                                        "Swagger에 에러 응답 예시가 "
+                                                        "잘 안 보여요."
+                                                    ),
+                                                },
+                                                {
+                                                    "timestamp": "00:06:20",
+                                                    "step": "대안논의",
+                                                    "speaker_id": "Speaker 1",
+                                                    "content": (
+                                                        "어노테이션 기반 예시 "
+                                                        "문서화가 논의됨"
+                                                    ),
+                                                    "utterance": (
+                                                        "어노테이션으로 예시를 붙이면 "
+                                                        "관리하기 좋겠습니다."
+                                                    ),
+                                                },
+                                                {
+                                                    "timestamp": "00:09:40",
+                                                    "step": "적용합의",
+                                                    "speaker_id": "Speaker 0",
+                                                    "content": (
+                                                        "ApiErrorCodeExample "
+                                                        "어노테이션을 "
+                                                        "추가하기로 합의함"
+                                                    ),
+                                                    "utterance": (
+                                                        "그럼 ApiErrorCodeExample을 "
+                                                        "추가하는 걸로 하죠."
+                                                    ),
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                    "other_mentions": [],
+                                },
+                            },
+                        },
+                    }
+                }
+            },
         },
         404: {
             "model": ApiErrorResponse,

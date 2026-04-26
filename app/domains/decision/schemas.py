@@ -48,7 +48,11 @@ class ApplicationTimelineItem(BaseModel):
 class Application(BaseModel):
     application_id: int | None = Field(
         default=None,
-        description="호출 측(예: Spring)에서 관리하는 적용사항 ID",
+        description=(
+            "호출 측(예: Spring)에서 관리하는 적용사항 ID. "
+            "AI가 처음 생성한 분석 결과에서는 null이며, "
+            "Spring이 DB 저장 후 발급한 applicationId를 임베딩 요청 때 채워 넣습니다."
+        ),
     )
     application_title: str = Field(description="적용사항 제목")
     application_reasons: list[str] = Field(
@@ -109,7 +113,10 @@ class MeetingAnalysisResponse(BaseModel):
 class EmbeddedDocument(BaseModel):
     document_id: str = Field(description="ChromaDB 문서 ID")
     text: str = Field(description="임베딩에 사용된 정규화 텍스트")
-    application_id: int | None = Field(default=None, description="원본 적용사항 ID")
+    application_id: int | None = Field(
+        default=None,
+        description="Spring이 전달한 원본 적용사항 ID",
+    )
     application_title: str = Field(description="원본 적용사항 제목")
 
 
