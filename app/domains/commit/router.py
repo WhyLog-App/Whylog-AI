@@ -31,7 +31,7 @@ router = APIRouter(prefix="/commit", tags=["commit"])
     "- 동일 commit_id 재호출 시 기존 데이터를 덮어씁니다 (upsert)\n"
     "- commit_hash가 포함되면 매칭 결과 식별용 메타데이터로 함께 저장합니다\n"
     "- 문서 ID: commit_{commit_id}\n"
-    "- 임베딩 텍스트: title: {repo} {subject} | text: "
+    "- 임베딩 텍스트: title: repository-{repository_id} {subject} | text: "
     "변경요약: | 기술키워드: | 변경방향: | 파일맥락: ",
     responses={
         400: {
@@ -69,7 +69,7 @@ async def analyze_commit(
         generate_embedding_text,
         request.commit_id,
         request.commit_hash,
-        request.repository,
+        request.repository_id,
         request.message,
         filtered_files,
     )
@@ -81,20 +81,18 @@ async def analyze_commit(
 @router.post(
     "/match",
     response_model=ApiResponse[DecisionCommitMatchResponse],
-    summary="결정사항-커밋 유사도 매칭",
+    summary="결정사항-커밋 추천 매칭",
     description=(
         "회의 결정사항(applied_item 단위)과 "
-        "커밋 임베딩 후보를 유사도 기반으로 매칭합니다.\n\n"
+        "커밋 임베딩 후보를 유사도 기반으로 추천합니다.\n\n"
         "점수 정책(100점):\n"
         "- 의미 유사성 50\n"
         "- 기술 키워드 일치도 30\n"
         "- 파일/모듈 맥락 일치도 20\n"
         "- 반대 의미(도입 vs 제거)는 semantic 0 처리\n"
         "- 추상 커밋/모호한 결정사항은 보정 감점\n\n"
-        "상태 구간:\n"
-        "- 70~100: APPLIED\n"
-        "- 50~69: PARTIAL\n"
-        "- 0~49: 미표시(UNAPPLIED)"
+        "응답은 결정사항별 추천 커밋을 신뢰도 내림차순으로 반환합니다.\n"
+        "사용자 연결 상태는 Spring 서버에서 별도로 관리합니다."
     ),
     responses={
         422: {
@@ -114,5 +112,5 @@ async def match_decision_commits(
     return ok_response(
         result=result,
         code="COMMIT_MATCH_200",
-        message="결정사항-커밋 매칭 분석이 완료되었습니다.",
+        message="결정사항-커밋 추천 분석이 완료되었습니다.",
     )

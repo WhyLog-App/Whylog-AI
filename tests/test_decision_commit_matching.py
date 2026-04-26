@@ -23,7 +23,7 @@ from app.main import app
 def _build_match_payload() -> dict:
     return {
         "meeting_id": "meeting-123",
-        "repository": "whylog/web",
+        "repository_id": 1,
         "top_k": 5,
     }
 
@@ -48,7 +48,7 @@ class TestDecisionCommitMatchingService:
         assert entries[0].embedding == [0.1, 0.2, 0.3]
 
     @pytest.mark.asyncio
-    async def test_matches_applied_and_partial_commits(self):
+    async def test_returns_recommended_commits_sorted_by_confidence(self):
         decision_collection = MagicMock()
         decision_collection.get.return_value = {
             "ids": ["meeting-123_card0_item0"],
@@ -96,7 +96,7 @@ class TestDecisionCommitMatchingService:
                         "commit_ref": "c1",
                         "commit_id": 1,
                         "commit_hash": "h1",
-                        "repository": "whylog/web",
+                        "repository_id": 1,
                         "direction_primary": "add",
                         "direction_multi_csv": "add",
                         "tech_keywords_csv": "redis,kafka,rabbitmq",
@@ -106,7 +106,7 @@ class TestDecisionCommitMatchingService:
                     {
                         "commit_ref": "c2",
                         "commit_hash": "h2",
-                        "repository": "whylog/web",
+                        "repository_id": 1,
                         "direction_primary": "add",
                         "direction_multi_csv": "add",
                         "tech_keywords_csv": "redis,kafka",
@@ -116,7 +116,7 @@ class TestDecisionCommitMatchingService:
                     {
                         "commit_ref": "c3",
                         "commit_hash": "h3",
-                        "repository": "whylog/web",
+                        "repository_id": 1,
                         "direction_primary": "modify",
                         "direction_multi_csv": "modify",
                         "tech_keywords_csv": "billing",
@@ -145,13 +145,21 @@ class TestDecisionCommitMatchingService:
         assert result.total_decision_items == 1
         assert result.matched_decision_items == 1
         item = result.decisions[0]
-        assert item.decision_status == "APPLIED"
-        assert len(item.connected_commits) == 1
-        assert len(item.recommended_commits) == 1
-        assert item.connected_commits[0].commit_id == 1
-        assert item.connected_commits[0].commit_hash == "h1"
-        assert item.connected_commits[0].confidence >= 70
-        assert item.recommended_commits[0].status == "PARTIAL"
+        assert len(item.recommended_commits) == 2
+        assert item.recommended_commits[0].commit_id == 1
+        assert item.recommended_commits[0].commit_hash == "h1"
+        assert item.recommended_commits[0].commit_message == (
+            "feat: introduce redis queue"
+        )
+        assert item.recommended_commits[0].confidence >= 70
+        assert "총" in item.recommended_commits[0].reason
+        assert "겹친 키워드" in item.recommended_commits[0].reason
+        assert item.recommended_commits[1].commit_hash == "h2"
+        assert item.recommended_commits[0].confidence >= (
+            item.recommended_commits[1].confidence
+        )
+        commit_collection.query.assert_called_once()
+        assert commit_collection.query.call_args.kwargs["where"] == {"repository_id": 1}
 
     @pytest.mark.asyncio
     async def test_opposite_direction_candidate_is_not_matched(self):
@@ -181,7 +189,7 @@ class TestDecisionCommitMatchingService:
                     {
                         "commit_ref": "c1",
                         "commit_hash": "h1",
-                        "repository": "whylog/web",
+                        "repository_id": 1,
                         "direction_primary": "add",
                         "direction_multi_csv": "add",
                         "tech_keywords_csv": "redis",
@@ -208,8 +216,6 @@ class TestDecisionCommitMatchingService:
             )
 
         item = result.decisions[0]
-        assert item.decision_status == "UNAPPLIED"
-        assert item.connected_commits == []
         assert item.recommended_commits == []
 
     @pytest.mark.asyncio
@@ -257,7 +263,7 @@ class TestDecisionCommitMatchingService:
                         {
                             "commit_ref": "c-shared",
                             "commit_hash": "h-shared",
-                            "repository": "whylog/web",
+                            "repository_id": 1,
                             "direction_primary": "add",
                             "direction_multi_csv": "add",
                             "tech_keywords_csv": "redis,kafka,rabbitmq",
@@ -283,7 +289,7 @@ class TestDecisionCommitMatchingService:
                         {
                             "commit_ref": "c-shared",
                             "commit_hash": "h-shared",
-                            "repository": "whylog/web",
+                            "repository_id": 1,
                             "direction_primary": "add",
                             "direction_multi_csv": "add",
                             "tech_keywords_csv": "redis,kafka,rabbitmq",
@@ -312,10 +318,7 @@ class TestDecisionCommitMatchingService:
 
         first_item = result.decisions[0]
         second_item = result.decisions[1]
-        assert first_item.decision_status == "APPLIED"
-        assert len(first_item.connected_commits) == 1
-        assert second_item.decision_status == "UNAPPLIED"
-        assert second_item.connected_commits == []
+        assert len(first_item.recommended_commits) == 1
         assert second_item.recommended_commits == []
 
 
@@ -325,7 +328,7 @@ class TestDecisionCommitMatchingEndpoint:
     def test_match_endpoint_success(self):
         mock_result = DecisionCommitMatchResponse(
             meeting_id="meeting-123",
-            repository="whylog/web",
+            repository_id=1,
             total_decision_items=1,
             matched_decision_items=1,
             decisions=[],
@@ -382,7 +385,7 @@ class TestCommitAnalyzeHashMetadata:
         request = CommitAnalyzeRequest(
             commit_id=1,
             commit_hash="b8fd9ad",
-            repository="whylog/web",
+            repository_id=1,
             message="feat: API 구현",
             changed_file_list=[
                 ChangedFile(
@@ -403,6 +406,7 @@ class TestCommitAnalyzeHashMetadata:
         task = background_tasks.tasks[0]
         assert task.args[0] == 1
         assert task.args[1] == "b8fd9ad"
+        assert task.args[2] == 1
 
     @pytest.mark.asyncio
     async def test_generate_embedding_text_stores_commit_hash_metadata(self):
@@ -436,7 +440,7 @@ class TestCommitAnalyzeHashMetadata:
             await generate_embedding_text(
                 1,
                 "b8fd9ad",
-                "whylog/web",
+                1,
                 "feat: API 구현",
                 [
                     ChangedFile(
@@ -449,3 +453,5 @@ class TestCommitAnalyzeHashMetadata:
         _, kwargs = collection.upsert.call_args
         assert kwargs["metadatas"][0]["commit_id"] == 1
         assert kwargs["metadatas"][0]["commit_hash"] == "b8fd9ad"
+        assert kwargs["metadatas"][0]["commit_message"] == "feat: API 구현"
+        assert kwargs["metadatas"][0]["repository_id"] == 1
