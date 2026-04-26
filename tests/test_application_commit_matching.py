@@ -179,9 +179,7 @@ class TestApplicationCommitMatchingService:
             item.recommended_commits[1].confidence
         )
         commit_collection.query.assert_called_once()
-        assert commit_collection.query.call_args.kwargs["where"] == {
-            "repository_id": 1
-        }
+        assert commit_collection.query.call_args.kwargs["where"] == {"repository_id": 1}
 
     @pytest.mark.asyncio
     async def test_repository_none_queries_without_where_filter(self):
