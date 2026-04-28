@@ -218,7 +218,8 @@ async def summarize_commit(
 
 async def generate_embedding_text(
     commit_id: int,
-    repository: str,
+    commit_hash: str | None,
+    repository_id: int,
     message: str,
     changed_file_list: list[ChangedFile],
 ) -> None:
@@ -235,7 +236,7 @@ async def generate_embedding_text(
 
         # 2) 스펙에 맞는 임베딩용 텍스트 조합
         commit_subject = message.split("\n", 1)[0].strip()
-        title = f"{repository} {commit_subject}"
+        title = f"repository-{repository_id} {commit_subject}"
         text_parts = [f"변경요약: {parsed.summary}"]
         if parsed.tech_keywords:
             text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
@@ -253,11 +254,14 @@ async def generate_embedding_text(
         doc_id = f"commit_{commit_id}"
         metadata = {
             "commit_id": commit_id,
-            "repository": repository,
+            "commit_message": commit_subject,
+            "repository_id": repository_id,
             "direction": ",".join(parsed.directions),
             "tech_keywords_csv": ",".join(parsed.tech_keywords),
             "module_tags_csv": ",".join(parsed.module_tags),
         }
+        if commit_hash:
+            metadata["commit_hash"] = commit_hash
         await asyncio.to_thread(
             collection.upsert,
             ids=[doc_id],
