@@ -3,12 +3,12 @@ import logging
 
 from google import genai
 
-from app.core.chroma import get_decision_collection
+from app.core.chroma import get_application_collection
 from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.decision.schemas import (
-    DecisionExtractionResult,
     EmbeddedDocument,
+    MeetingAnalysisResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,11 @@ def _normalize_text(value: str) -> str:
     return " ".join((value or "").split())
 
 
-def _build_reason_text(decision_reasons: list[str]) -> tuple[str, int]:
+def _build_reason_text(application_reasons: list[str]) -> tuple[str, int]:
     """중복을 제거한 근거 문장을 전체 반영 텍스트로 생성한다."""
     normalized_reasons: list[str] = []
     seen: set[str] = set()
-    for reason in decision_reasons:
+    for reason in application_reasons:
         normalized = _normalize_text(reason)
         if not normalized:
             continue
@@ -57,54 +57,36 @@ def _build_reason_text(decision_reasons: list[str]) -> tuple[str, int]:
 
 def build_embedding_documents(
     meeting_id: str,
-    decision_result: DecisionExtractionResult,
+    analysis_result: MeetingAnalysisResult,
 ) -> list[EmbeddedDocument]:
-    """의사결정 추출 결과에서 applied_item 단위 임베딩 문서를 생성한다.
+    """회의 분석 결과에서 application 단위 임베딩 문서를 생성한다.
 
-    문서 ID: {meeting_id}_card{i}_item{j}
-    텍스트: "title: {title} | text: 적용사항: {item} | 근거: {근거들}"
+    문서 ID: {meeting_id}_application{i}
+    텍스트: "title: {title} | text: 적용사항: {title} | 근거: {근거들}"
     """
     documents: list[EmbeddedDocument] = []
     total_reasons = 0
 
-    # 카드별 applied_item을 검색 가능한 최소 단위 문서로 분해한다.
-    for card_idx, card in enumerate(decision_result.decision_cards):
-        title = _normalize_text(card.decision_title)
-        reason_text, reason_total = _build_reason_text(card.decision_reasons)
+    # 적용사항 자체가 커밋 매칭의 최소 단위 문서다.
+    for application_idx, application in enumerate(analysis_result.applications):
+        title = _normalize_text(application.application_title)
+        reason_text, reason_total = _build_reason_text(application.application_reasons)
         total_reasons += reason_total
-
-        if not card.applied_items:
-            doc_id = f"{meeting_id}_card{card_idx}_item0"
-            text = f"title: {title or 'none'} | text: 적용사항 없음"
-            if reason_text:
-                text += f" | 근거: {reason_text}"
-            documents.append(
-                EmbeddedDocument(
-                    document_id=doc_id,
-                    text=text,
-                    decision_title=title,
-                    applied_item="",
-                )
+        doc_id = f"{meeting_id}_application{application_idx}"
+        text = f"title: {title or 'none'} | text: 적용사항: {title or 'none'}"
+        if reason_text:
+            text += f" | 근거: {reason_text}"
+        documents.append(
+            EmbeddedDocument(
+                document_id=doc_id,
+                text=text,
+                application_id=application.application_id,
+                application_title=title,
             )
-            continue
-
-        for item_idx, item in enumerate(card.applied_items):
-            doc_id = f"{meeting_id}_card{card_idx}_item{item_idx}"
-            normalized_item = _normalize_text(item)
-            text = f"title: {title or 'none'} | text: 적용사항: {normalized_item}"
-            if reason_text:
-                text += f" | 근거: {reason_text}"
-            documents.append(
-                EmbeddedDocument(
-                    document_id=doc_id,
-                    text=text,
-                    decision_title=title,
-                    applied_item=normalized_item,
-                )
-            )
+        )
 
     logger.info(
-        "Decision reasons appended (meeting_id=%s, reason_count=%d)",
+        "Application reasons appended (meeting_id=%s, reason_count=%d)",
         meeting_id,
         total_reasons,
     )
@@ -127,7 +109,7 @@ async def _generate_embeddings(texts: list[str]) -> list[list[float]]:
     try:
         # 네트워크 왕복 비용을 줄이기 위해 텍스트를 배치로 임베딩한다.
         response = await client.aio.models.embed_content(
-            model=settings.decision_embedding_model,
+            model=settings.embedding_model,
             contents=texts,
         )
     except Exception as e:
@@ -142,20 +124,29 @@ async def _generate_embeddings(texts: list[str]) -> list[list[float]]:
 # ── ChromaDB 저장 ──
 
 
-async def embed_and_store_decisions(
+async def embed_and_store_applications(
     meeting_id: str,
     project_id: str | None,
-    decision_result: DecisionExtractionResult,
+    analysis_result: MeetingAnalysisResult,
 ) -> list[EmbeddedDocument]:
-    """결정사항을 정규화 → 임베딩 → ChromaDB 저장한다.
+    """적용사항을 정규화 → 임베딩 → ChromaDB 저장한다.
 
     동일 meeting_id 재처리 시 기존 문서를 삭제 후 새로 추가한다.
     """
-    documents = build_embedding_documents(meeting_id, decision_result)
+    documents = build_embedding_documents(meeting_id, analysis_result)
     texts = [doc.text for doc in documents]
     embeddings = await _generate_embeddings(texts) if texts else []
+    missing_application_id_count = sum(
+        1 for doc in documents if doc.application_id is None
+    )
+    if missing_application_id_count:
+        logger.warning(
+            "Application IDs missing for %d embedding documents (meeting_id=%s)",
+            missing_application_id_count,
+            meeting_id,
+        )
 
-    collection = get_decision_collection()
+    collection = get_application_collection()
     lock = await _get_meeting_lock(meeting_id)
 
     # 동일 meeting_id 요청이 동시에 들어올 때 delete/add 순서를 직렬화한다.
@@ -201,8 +192,10 @@ async def embed_and_store_decisions(
             {
                 "meeting_id": meeting_id,
                 "project_id": project_id or "",
-                "decision_title": doc.decision_title,
-                "applied_item": doc.applied_item,
+                "application_id": (
+                    doc.application_id if doc.application_id is not None else ""
+                ),
+                "application_title": doc.application_title,
             }
             for doc in documents
         ]

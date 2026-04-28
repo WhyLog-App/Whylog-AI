@@ -14,24 +14,24 @@ from app.domains.decision.services.matching_scoring import (
 def _make_payload(
     *,
     distance: float | None = 0.12,
-    decision_text: str = (
+    application_text: str = (
         "Redis 도입으로 notification module 처리 지연을 줄이고 queue 안정성을 확보한다."
     ),
     commit_text: str = (
         "introduce redis pubsub for notification queue and improve retry."
     ),
     commit_message: str = "feat: introduce redis pubsub for notification queue",
-    decision_direction: set[str] | None = None,
+    application_direction: set[str] | None = None,
     commit_direction: set[str] | None = None,
-    decision_keywords: set[str] | None = None,
+    application_keywords: set[str] | None = None,
     commit_keywords: set[str] | None = None,
-    decision_modules: set[str] | None = None,
+    application_modules: set[str] | None = None,
     commit_modules: set[str] | None = None,
 ) -> ScoringInput:
-    resolved_decision_direction = (
-        decision_direction
-        if decision_direction is not None
-        else extract_direction_labels_from_text(decision_text)
+    resolved_application_direction = (
+        application_direction
+        if application_direction is not None
+        else extract_direction_labels_from_text(application_text)
     )
     resolved_commit_direction = (
         commit_direction
@@ -39,20 +39,20 @@ def _make_payload(
         else normalize_direction_labels("introduce")
         | extract_direction_labels_from_text(commit_text)
     )
-    resolved_decision_keywords = (
-        decision_keywords
-        if decision_keywords is not None
-        else extract_tech_keywords(decision_text)
+    resolved_application_keywords = (
+        application_keywords
+        if application_keywords is not None
+        else extract_tech_keywords(application_text)
     )
     resolved_commit_keywords = (
         commit_keywords
         if commit_keywords is not None
         else extract_tech_keywords(commit_text, "redis")
     )
-    resolved_decision_modules = (
-        decision_modules
-        if decision_modules is not None
-        else extract_module_tokens(decision_text)
+    resolved_application_modules = (
+        application_modules
+        if application_modules is not None
+        else extract_module_tokens(application_text)
     )
     resolved_commit_modules = (
         commit_modules
@@ -62,14 +62,14 @@ def _make_payload(
 
     return ScoringInput(
         semantic_distance=distance,
-        decision_text=decision_text,
+        application_text=application_text,
         commit_text=commit_text,
         commit_message=commit_message,
-        decision_direction_labels=resolved_decision_direction,
+        application_direction_labels=resolved_application_direction,
         commit_direction_labels=resolved_commit_direction,
-        decision_keywords=resolved_decision_keywords,
+        application_keywords=resolved_application_keywords,
         commit_keywords=resolved_commit_keywords,
-        decision_modules=resolved_decision_modules,
+        application_modules=resolved_application_modules,
         commit_modules=resolved_commit_modules,
     )
 
@@ -121,9 +121,9 @@ class TestTotalScorePolicy:
     def test_boundary_score_70_is_applied(self):
         payload = _make_payload(
             distance=0.10,  # semantic 45
-            decision_keywords={"redis", "kafka"},
+            application_keywords={"redis", "kafka"},
             commit_keywords={"redis"},  # keyword 15
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"notification"},  # context 10
         )
         score = calculate_match_score(payload)
@@ -134,9 +134,9 @@ class TestTotalScorePolicy:
     def test_boundary_score_69_is_partial(self):
         payload = _make_payload(
             distance=0.12,  # semantic 44
-            decision_keywords={"redis", "kafka"},
+            application_keywords={"redis", "kafka"},
             commit_keywords={"redis"},  # keyword 15
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"notification"},  # context 10
         )
         score = calculate_match_score(payload)
@@ -147,9 +147,9 @@ class TestTotalScorePolicy:
     def test_boundary_score_50_is_partial(self):
         payload = _make_payload(
             distance=0.30,  # semantic 35
-            decision_keywords={"redis", "kafka"},
+            application_keywords={"redis", "kafka"},
             commit_keywords={"redis"},  # keyword 15
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"billing"},  # context 0
         )
         score = calculate_match_score(payload)
@@ -160,9 +160,9 @@ class TestTotalScorePolicy:
     def test_boundary_score_49_is_unapplied(self):
         payload = _make_payload(
             distance=0.32,  # semantic 34
-            decision_keywords={"redis", "kafka"},
+            application_keywords={"redis", "kafka"},
             commit_keywords={"redis"},  # keyword 15
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"billing"},  # context 0
         )
         score = calculate_match_score(payload)
@@ -173,7 +173,7 @@ class TestTotalScorePolicy:
     def test_opposite_direction_sets_semantic_to_zero(self):
         payload = _make_payload(
             distance=0.05,  # semantic high expected, but must be zero
-            decision_direction={"positive"},
+            application_direction={"positive"},
             commit_direction={"negative"},
         )
         score = calculate_match_score(payload)
@@ -183,9 +183,9 @@ class TestTotalScorePolicy:
     def test_goal_mismatch_keyword_only_forces_zero(self):
         payload = _make_payload(
             distance=0.90,  # semantic 5
-            decision_keywords={"redis"},
+            application_keywords={"redis"},
             commit_keywords={"redis"},  # keyword 15
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"auth"},
         )
         score = calculate_match_score(payload)
@@ -198,9 +198,9 @@ class TestTotalScorePolicy:
         payload = _make_payload(
             distance=0.30,  # semantic 35
             commit_message="refactor",
-            decision_keywords={"redis", "kafka"},
+            application_keywords={"redis", "kafka"},
             commit_keywords={"redis", "kafka"},  # keyword 25
-            decision_modules={"notification"},
+            application_modules={"notification"},
             commit_modules={"notification"},  # context 10
         )
         score = calculate_match_score(payload)
@@ -208,12 +208,12 @@ class TestTotalScorePolicy:
         assert score.penalty >= 10
         assert score.total <= 60
 
-    def test_ambiguous_decision_penalty_minus_10(self):
+    def test_ambiguous_application_penalty_minus_10(self):
         payload = _make_payload(
             distance=0.20,  # semantic 40
-            decision_text="개선 방향 논의",
-            decision_keywords=set(),
-            decision_modules=set(),
+            application_text="개선 방향 논의",
+            application_keywords=set(),
+            application_modules=set(),
             commit_keywords={"redis", "kafka"},
             commit_modules={"notification"},
         )

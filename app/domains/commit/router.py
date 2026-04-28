@@ -3,13 +3,13 @@ from fastapi import APIRouter, BackgroundTasks
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.commit.schemas import (
+    ApplicationCommitMatchRequest,
+    ApplicationCommitMatchResponse,
     CommitAnalyzeRequest,
     CommitAnalyzeResponse,
-    DecisionCommitMatchRequest,
-    DecisionCommitMatchResponse,
 )
 from app.domains.commit.services.diff_filter import filter_changed_files
-from app.domains.commit.services.matching import match_decisions_with_commits
+from app.domains.commit.services.matching import match_applications_with_commits
 from app.domains.commit.services.summarize import (
     generate_embedding_text,
     summarize_commit,
@@ -25,6 +25,9 @@ router = APIRouter(prefix="/commit", tags=["commit"])
     summary="커밋 분석 API",
     description="Spring에서 커밋 메시지와 diff를 받아 "
     "LLM(Gemini)으로 요약한 결과를 반환합니다.\n\n"
+    "**Spring 연동 입력:**\n"
+    "- Spring commit detail의 `hash`는 `commit_hash`로 변환해 전달합니다.\n"
+    "- Spring repository 식별자는 `repository_id`로 전달합니다.\n\n"
     "**백그라운드 임베딩 저장:**\n"
     "- 구조화 임베딩 텍스트 생성 → Gemini Embedding API 벡터 변환 → "
     "ChromaDB(commit_embeddings) 저장\n"
@@ -34,6 +37,25 @@ router = APIRouter(prefix="/commit", tags=["commit"])
     "- 임베딩 텍스트: title: repository-{repository_id} {subject} | text: "
     "변경요약: | 기술키워드: | 변경방향: | 파일맥락: ",
     responses={
+        200: {
+            "description": "커밋 분석 성공.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "COMMON_200",
+                        "message": "요청이 성공적으로 처리되었습니다.",
+                        "result": {
+                            "commit_id": 4,
+                            "summary": (
+                                "Swagger 에러 문서화를 위한 "
+                                "ApiErrorCodeExample 어노테이션을 추가했습니다."
+                            ),
+                        },
+                    }
+                }
+            },
+        },
         400: {
             "model": ApiErrorResponse,
             "description": "분석할 수 있는 변경 파일이 없습니다.",
@@ -80,21 +102,86 @@ async def analyze_commit(
 
 @router.post(
     "/match",
-    response_model=ApiResponse[DecisionCommitMatchResponse],
-    summary="결정사항-커밋 추천 매칭",
+    response_model=ApiResponse[ApplicationCommitMatchResponse],
+    summary="적용사항-커밋 추천 매칭",
     description=(
-        "회의 결정사항(applied_item 단위)과 "
+        "회의 적용사항(application 단위)에 대해 "
         "커밋 임베딩 후보를 유사도 기반으로 추천합니다.\n\n"
         "점수 정책(100점):\n"
         "- 의미 유사성 50\n"
         "- 기술 키워드 일치도 30\n"
         "- 파일/모듈 맥락 일치도 20\n"
         "- 반대 의미(도입 vs 제거)는 semantic 0 처리\n"
-        "- 추상 커밋/모호한 결정사항은 보정 감점\n\n"
-        "응답은 결정사항별 추천 커밋을 신뢰도 내림차순으로 반환합니다.\n"
+        "- 추상 커밋/모호한 적용사항은 보정 감점\n\n"
+        "응답은 적용사항별 추천 커밋을 신뢰도 내림차순으로 반환합니다.\n"
         "사용자 연결 상태는 Spring 서버에서 별도로 관리합니다."
     ),
     responses={
+        200: {
+            "description": "적용사항별 추천 커밋 매칭 성공.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "COMMIT_MATCH_200",
+                        "message": "적용사항-커밋 추천 분석이 완료되었습니다.",
+                        "result": {
+                            "meeting_id": "meeting-123",
+                            "repository_id": 1,
+                            "total_applications": 1,
+                            "matched_applications": 1,
+                            "applications": [
+                                {
+                                    "application_id": 101,
+                                    "application_document_id": (
+                                        "meeting-123_application0"
+                                    ),
+                                    "application_title": (
+                                        "Swagger 에러 응답 예시 문서화"
+                                    ),
+                                    "recommended_commits": [
+                                        {
+                                            "commit_id": 4,
+                                            "commit_ref": None,
+                                            "commit_hash": (
+                                                "cb2222fb915f9dfbd5b22eded57dadd57f225798"
+                                            ),
+                                            "commit_message": (
+                                                "chore: Swagger 에러 문서화를 위한 "
+                                                "ApiErrorCodeExample 어노테이션 추가"
+                                            ),
+                                            "repository_id": 1,
+                                            "confidence": 94,
+                                            "reason": (
+                                                "총 94점: 의미 44/50, 키워드 30/30, "
+                                                "맥락 20/20. 겹친 키워드: swagger, "
+                                                "error, api. 겹친 모듈: swagger, api."
+                                            ),
+                                            "score_breakdown": {
+                                                "semantic": 44,
+                                                "keyword": 30,
+                                                "context": 20,
+                                                "penalty": 0,
+                                                "total": 94,
+                                            },
+                                            "direction_primary": "add",
+                                            "direction_multi": ["add"],
+                                            "tech_keywords": [
+                                                "api",
+                                                "error",
+                                                "swagger",
+                                            ],
+                                            "module_tags": ["api", "swagger"],
+                                        }
+                                    ],
+                                }
+                            ],
+                            "notice": "신뢰도는 AI 분석 기반 추정값입니다.",
+                        },
+                    }
+                }
+            },
+        },
         422: {
             "model": ApiErrorResponse,
             "description": "요청 스키마 검증 실패(예: meeting_id 형식, top_k 범위).",
@@ -105,12 +192,12 @@ async def analyze_commit(
         },
     },
 )
-async def match_decision_commits(
-    request: DecisionCommitMatchRequest,
-) -> ApiResponse[DecisionCommitMatchResponse]:
-    result = await match_decisions_with_commits(request)
+async def match_application_commits(
+    request: ApplicationCommitMatchRequest,
+) -> ApiResponse[ApplicationCommitMatchResponse]:
+    result = await match_applications_with_commits(request)
     return ok_response(
         result=result,
         code="COMMIT_MATCH_200",
-        message="결정사항-커밋 추천 분석이 완료되었습니다.",
+        message="적용사항-커밋 추천 분석이 완료되었습니다.",
     )

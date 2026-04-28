@@ -1,7 +1,7 @@
 from app.domains.decision.services.extraction import (
-    DECISION_POLICY_PROMPT,
+    APPLICATION_POLICY_PROMPT,
     GEMINI_MODEL,
-    extract_decisions,
+    extract_meeting_analysis,
 )
 
-__all__ = ["DECISION_POLICY_PROMPT", "GEMINI_MODEL", "extract_decisions"]
+__all__ = ["APPLICATION_POLICY_PROMPT", "GEMINI_MODEL", "extract_meeting_analysis"]

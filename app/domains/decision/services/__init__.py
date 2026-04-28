@@ -1,1 +1,1 @@
-"""Decision domain services."""
+"""Meeting analysis and application domain services."""

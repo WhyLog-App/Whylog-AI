@@ -3,12 +3,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.chroma import get_commit_collection, get_decision_collection
+from app.core.chroma import get_application_collection, get_commit_collection
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import (
-    DecisionCommitMatchItem,
-    DecisionCommitMatchRequest,
-    DecisionCommitMatchResponse,
+    ApplicationCommitMatchItem,
+    ApplicationCommitMatchRequest,
+    ApplicationCommitMatchResponse,
     MatchedCommit,
     MatchScoreBreakdown,
 )
@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class DecisionEntry:
+class ApplicationEntry:
     document_id: str
     text: str
     embedding: list[float] | None
-    decision_title: str
-    applied_item: str
+    application_id: int | None
+    application_title: str
     direction_labels: set[str]
     keywords: set[str]
     modules: set[str]
@@ -41,8 +41,8 @@ class DecisionEntry:
 @dataclass(frozen=True)
 class MatchRecord:
     commit_key: str
-    decision_index: int
-    decision_direction_labels: set[str]
+    application_index: int
+    application_direction_labels: set[str]
     commit: MatchedCommit
 
 
@@ -81,13 +81,13 @@ def _format_tokens(tokens: set[str], *, limit: int = 3) -> str:
 def _build_recommendation_reason(
     *,
     score: Any,
-    decision_keywords: set[str],
+    application_keywords: set[str],
     commit_keywords: set[str],
-    decision_modules: set[str],
+    application_modules: set[str],
     commit_modules: set[str],
 ) -> str:
-    keyword_overlap = decision_keywords & commit_keywords
-    module_overlap = decision_modules & commit_modules
+    keyword_overlap = application_keywords & commit_keywords
+    module_overlap = application_modules & commit_modules
 
     parts = [
         (
@@ -127,7 +127,7 @@ def _build_commit_key(
     return f"id:{fallback_id}"
 
 
-def _to_decision_entries(raw: dict[str, Any]) -> list[DecisionEntry]:
+def _to_application_entries(raw: dict[str, Any]) -> list[ApplicationEntry]:
     ids = raw.get("ids") or []
     documents = raw.get("documents") or []
     metadatas = raw.get("metadatas") or []
@@ -135,15 +135,15 @@ def _to_decision_entries(raw: dict[str, Any]) -> list[DecisionEntry]:
     if embeddings is None:
         embeddings = []
 
-    entries: list[DecisionEntry] = []
+    entries: list[ApplicationEntry] = []
     for idx, document_id in enumerate(ids):
         metadata = metadatas[idx] if idx < len(metadatas) and metadatas[idx] else {}
         text = documents[idx] if idx < len(documents) and documents[idx] else ""
         embedding = embeddings[idx] if idx < len(embeddings) else None
 
-        decision_title = _first_str(metadata.get("decision_title")) or ""
-        applied_item = _first_str(metadata.get("applied_item")) or ""
-        full_text = f"{decision_title} {applied_item} {text}".strip()
+        application_title = _first_str(metadata.get("application_title")) or ""
+        application_id = _first_int(metadata.get("application_id"))
+        full_text = f"{application_title} {text}".strip()
 
         direction_labels = normalize_direction_labels(
             _first_str(metadata.get("direction_primary")),
@@ -154,12 +154,12 @@ def _to_decision_entries(raw: dict[str, Any]) -> list[DecisionEntry]:
             direction_labels = extract_direction_labels_from_text(full_text)
 
         entries.append(
-            DecisionEntry(
+            ApplicationEntry(
                 document_id=document_id,
                 text=text,
                 embedding=_to_float_list(embedding),
-                decision_title=decision_title,
-                applied_item=applied_item,
+                application_id=application_id,
+                application_title=application_title,
                 direction_labels=direction_labels,
                 keywords=extract_tech_keywords(full_text),
                 modules=extract_module_tokens(full_text),
@@ -196,8 +196,8 @@ def _resolve_conflicting_matches(records: list[MatchRecord]) -> list[MatchRecord
         for candidate in sorted_group:
             if any(
                 is_opposite_direction(
-                    candidate.decision_direction_labels,
-                    kept.decision_direction_labels,
+                    candidate.application_direction_labels,
+                    kept.application_direction_labels,
                 )
                 for kept in kept_for_commit
             ):
@@ -209,8 +209,8 @@ def _resolve_conflicting_matches(records: list[MatchRecord]) -> list[MatchRecord
     return [record for record in records if id(record) in kept_ids]
 
 
-async def _load_decision_entries(meeting_id: str) -> list[DecisionEntry]:
-    collection = get_decision_collection()
+async def _load_application_entries(meeting_id: str) -> list[ApplicationEntry]:
+    collection = get_application_collection()
     try:
         raw = await asyncio.to_thread(
             collection.get,
@@ -219,11 +219,11 @@ async def _load_decision_entries(meeting_id: str) -> list[DecisionEntry]:
         )
     except Exception as e:
         raise AppServiceError(
-            "결정사항 임베딩 조회에 실패했습니다.",
+            "적용사항 임베딩 조회에 실패했습니다.",
             status_code=502,
         ) from e
 
-    return _to_decision_entries(raw)
+    return _to_application_entries(raw)
 
 
 async def _query_commit_candidates(
@@ -255,8 +255,8 @@ async def _query_commit_candidates(
 
 def _build_match_record(
     *,
-    decision: DecisionEntry,
-    decision_index: int,
+    application: ApplicationEntry,
+    application_index: int,
     commit_id: str,
     commit_document: str,
     metadata: dict[str, Any],
@@ -296,14 +296,14 @@ def _build_match_record(
     score = calculate_match_score(
         ScoringInput(
             semantic_distance=_normalize_distance(distance),
-            decision_text=decision.text,
+            application_text=application.text,
             commit_text=commit_document,
             commit_message=commit_message,
-            decision_direction_labels=decision.direction_labels,
+            application_direction_labels=application.direction_labels,
             commit_direction_labels=commit_direction_labels,
-            decision_keywords=decision.keywords,
+            application_keywords=application.keywords,
             commit_keywords=commit_keywords,
-            decision_modules=decision.modules,
+            application_modules=application.modules,
             commit_modules=commit_modules,
         )
     )
@@ -320,9 +320,9 @@ def _build_match_record(
         confidence=score.total,
         reason=_build_recommendation_reason(
             score=score,
-            decision_keywords=decision.keywords,
+            application_keywords=application.keywords,
             commit_keywords=commit_keywords,
-            decision_modules=decision.modules,
+            application_modules=application.modules,
             commit_modules=commit_modules,
         ),
         score_breakdown=MatchScoreBreakdown(
@@ -340,40 +340,40 @@ def _build_match_record(
 
     return MatchRecord(
         commit_key=_build_commit_key(commit_ref, commit_hash, commit_id),
-        decision_index=decision_index,
-        decision_direction_labels=decision.direction_labels,
+        application_index=application_index,
+        application_direction_labels=application.direction_labels,
         commit=matched_commit,
     )
 
 
-async def match_decisions_with_commits(
-    payload: DecisionCommitMatchRequest,
-) -> DecisionCommitMatchResponse:
-    decision_entries = await _load_decision_entries(payload.meeting_id)
-    if not decision_entries:
-        return DecisionCommitMatchResponse(
+async def match_applications_with_commits(
+    payload: ApplicationCommitMatchRequest,
+) -> ApplicationCommitMatchResponse:
+    application_entries = await _load_application_entries(payload.meeting_id)
+    if not application_entries:
+        return ApplicationCommitMatchResponse(
             meeting_id=payload.meeting_id,
             repository_id=payload.repository_id,
-            total_decision_items=0,
-            matched_decision_items=0,
-            decisions=[],
+            total_applications=0,
+            matched_applications=0,
+            applications=[],
         )
 
     pool_size = min(100, max(payload.top_k, payload.top_k * 5))
-    matched_by_decision: dict[int, dict[str, MatchRecord]] = {
-        idx: {} for idx in range(len(decision_entries))
+    matched_by_application: dict[int, dict[str, MatchRecord]] = {
+        idx: {} for idx in range(len(application_entries))
     }
 
-    for decision_index, decision in enumerate(decision_entries):
-        if not decision.embedding:
+    for application_index, application in enumerate(application_entries):
+        if not application.embedding:
             logger.warning(
-                "결정사항 문서에 임베딩이 없어 후보 조회를 건너뜁니다: %s",
-                decision.document_id,
+                "적용사항 문서에 임베딩이 없어 후보 조회를 건너뜁니다: %s",
+                application.document_id,
             )
             continue
 
         query_result = await _query_commit_candidates(
-            decision.embedding,
+            application.embedding,
             n_results=pool_size,
             repository_id=payload.repository_id,
         )
@@ -392,6 +392,7 @@ async def match_decisions_with_commits(
             metadata = metadatas[idx] if idx < len(metadatas) and metadatas[idx] else {}
             commit_repository_id = _first_int(metadata.get("repository_id"))
 
+            # Chroma where 필터 이후에도 metadata 불일치에 대비해 한 번 더 검증한다.
             if (
                 payload.repository_id is not None
                 and commit_repository_id != payload.repository_id
@@ -401,8 +402,8 @@ async def match_decisions_with_commits(
             commit_document = docs[idx] if idx < len(docs) and docs[idx] else ""
             distance = distances[idx] if idx < len(distances) else None
             record = _build_match_record(
-                decision=decision,
-                decision_index=decision_index,
+                application=application,
+                application_index=application_index,
                 commit_id=commit_id,
                 commit_document=commit_document,
                 metadata=metadata,
@@ -411,32 +412,32 @@ async def match_decisions_with_commits(
             if not record:
                 continue
 
-            existing = matched_by_decision[decision_index].get(record.commit_key)
+            existing = matched_by_application[application_index].get(record.commit_key)
             if (
                 existing is None
                 or record.commit.score_breakdown.total
                 > existing.commit.score_breakdown.total
             ):
-                matched_by_decision[decision_index][record.commit_key] = record
+                matched_by_application[application_index][record.commit_key] = record
 
     flattened_records = [
         record
-        for records in matched_by_decision.values()
+        for records in matched_by_application.values()
         for record in records.values()
     ]
     resolved_records = _resolve_conflicting_matches(flattened_records)
 
-    records_by_decision: dict[int, list[MatchRecord]] = {
-        idx: [] for idx in matched_by_decision
+    records_by_application: dict[int, list[MatchRecord]] = {
+        idx: [] for idx in matched_by_application
     }
     for record in resolved_records:
-        records_by_decision[record.decision_index].append(record)
+        records_by_application[record.application_index].append(record)
 
-    decision_items: list[DecisionCommitMatchItem] = []
-    matched_decision_items = 0
-    for idx, entry in enumerate(decision_entries):
+    application_items: list[ApplicationCommitMatchItem] = []
+    matched_applications = 0
+    for idx, entry in enumerate(application_entries):
         sorted_records = sorted(
-            records_by_decision[idx],
+            records_by_application[idx],
             key=lambda record: record.commit.score_breakdown.total,
             reverse=True,
         )[: payload.top_k]
@@ -444,21 +445,21 @@ async def match_decisions_with_commits(
         recommended_commits = [record.commit for record in sorted_records]
 
         if recommended_commits:
-            matched_decision_items += 1
+            matched_applications += 1
 
-        decision_items.append(
-            DecisionCommitMatchItem(
-                decision_document_id=entry.document_id,
-                decision_title=entry.decision_title,
-                applied_item=entry.applied_item,
+        application_items.append(
+            ApplicationCommitMatchItem(
+                application_id=entry.application_id,
+                application_document_id=entry.document_id,
+                application_title=entry.application_title,
                 recommended_commits=recommended_commits,
             )
         )
 
-    return DecisionCommitMatchResponse(
+    return ApplicationCommitMatchResponse(
         meeting_id=payload.meeting_id,
         repository_id=payload.repository_id,
-        total_decision_items=len(decision_entries),
-        matched_decision_items=matched_decision_items,
-        decisions=decision_items,
+        total_applications=len(application_entries),
+        matched_applications=matched_applications,
+        applications=application_items,
     )

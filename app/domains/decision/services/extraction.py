@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 
 from app.core.errors import AppServiceError
 from app.domains.decision.schemas import (
-    DecisionCard,
-    DecisionExtractionResult,
-    OverallAnalysis,
+    Application,
+    MeetingAnalysis,
+    MeetingAnalysisResult,
 )
 from app.domains.transcribe.schemas import TranscribeSegment
 
@@ -32,22 +32,22 @@ AMBIGUOUS_SHORT_UTTERANCES = {
     "okay",
 }
 
-DECISION_POLICY_PROMPT = "\n".join(
+APPLICATION_POLICY_PROMPT = "\n".join(
     [
         "당신은 Whylog 프로젝트의 수석 분석가입니다.",
         "아래 STT 데이터를 바탕으로 'Whylog 3대 운영 정책'을",
         "엄격히 준수하여 분석을 수행하세요.",
         "",
         "------------------------------------------------------------",
-        "[정책 1: 회의 종료 시 Decision 생성 정책]",
+        "[정책 1: 회의 종료 시 적용사항 생성 정책]",
         "1. 명확한 선택지 수렴, 기술/구조/정책/프로세스 변경 합의,",
-        '   "~하기로 한다"는 명시적 결론이 있을 때만 Decision을 생성한다.',
+        '   "~하기로 한다"는 명시적 결론이 있을 때만 적용사항을 생성한다.',
         "2. 단순 의견 교환, 결론 없는 토론, 감정 표현, 농담/잡담은",
         "   절대 생성하지 않는다.",
-        "3. 주제가 다르면 별도 Decision으로 분리하고,",
+        "3. 실제 반영/실행 단위가 다르면 별도 적용사항으로 분리하고,",
         "   모호한 경우 생성하지 말고 보류 처리한다.",
         "",
-        "[정책 2: 결정(Decision) 근거 정책]",
+        "[정책 2: 적용사항 근거 정책]",
         "1. 기술적/비용적/운영적 이유, 리스크 판단,",
         "   성능/확장성/안정성 관련 판단을 포함한다.",
         "2. 감정적 반응, 농담, 단순 동의는 제외한다.",
@@ -55,9 +55,9 @@ DECISION_POLICY_PROMPT = "\n".join(
         "4. 반드시 '1 근거 = 1 문장' 원칙을 준수한다.",
         "   (리스트의 각 항목은 한 문장이어야 함)",
         "",
-        "[정책 3: Decision 타임라인 정책]",
-        "1. 이슈 제기 -> 대안 논의 -> 최종 합의 시점 순으로 구성한다.",
-        "2. Decision과 직접 관련된 흐름만 표시하고 단순 발언은 제외한다.",
+        "[정책 3: 적용사항 타임라인 정책]",
+        "1. 이슈 제기 -> 대안 논의 -> 적용 합의 시점 순으로 구성한다.",
+        "2. 적용사항과 직접 관련된 흐름만 표시하고 단순 발언은 제외한다.",
         "3. 반드시 실제 발화(Utterance) 원문과 화자 ID를 포함한다.",
         "4. timeline의 content는 간략한 한 문장으로 작성한다.",
         "------------------------------------------------------------",
@@ -68,20 +68,19 @@ DECISION_POLICY_PROMPT = "\n".join(
         '    "meeting_info": { "title": "...", "purpose": "...", "duration": "..." },',
         '    "topics": ["논의된 모든 주제 리스트"],',
         '    "core_context": ["프로젝트 배경 및 제약 사항"],',
-        '    "final_decisions_list": ["생성된 모든 결정사항 타이틀 리스트"],',
-        '    "all_decision_reasons": [',
-        '      "모든 결정사항의 근거를 통합하여 정렬한 리스트"',
+        '    "application_titles": ["생성된 모든 적용사항 타이틀 리스트"],',
+        '    "application_reasons": [',
+        '      "모든 적용사항의 근거를 통합하여 정렬한 리스트"',
         "    ]",
         "  },",
-        '  "decision_cards": [',
+        '  "applications": [',
         "    {",
-        '      "decision_title": "결정 사항 명칭",',
-        '      "applied_items": ["수행해야 할 액션 아이템"],',
-        '      "decision_reasons": ["해당 결정의 근거 (1근거=1문장)"],',
+        '      "application_title": "커밋과 연결될 적용사항 명칭",',
+        '      "application_reasons": ["해당 적용사항의 근거 (1근거=1문장)"],',
         '      "timeline": [',
         "        {",
         '          "timestamp": "...",',
-        '          "step": "이슈제기/대안논의/최종합의",',
+        '          "step": "이슈제기/대안논의/적용합의",',
         '          "speaker_id": "Speaker 0",',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
@@ -89,7 +88,7 @@ DECISION_POLICY_PROMPT = "\n".join(
         "      ]",
         "    }",
         "  ],",
-        '  "other_mentions": ["결정되지 않은 기술적 제언 및 미래 과제"]',
+        '  "other_mentions": ["적용사항으로 확정되지 않은 기술적 제언 및 미래 과제"]',
         "}",
     ]
 )
@@ -101,8 +100,8 @@ SUMMARY_ONLY_PROMPT = "\n".join(
         "",
         "[핵심 규칙]",
         "1. 실제 회의 내용 기반으로만 작성하고 추측하지 않는다.",
-        "2. final_decisions_list에는 실제 합의된 결정만 넣는다.",
-        "3. all_decision_reasons는 근거를 문장 단위로 정리한다.",
+        "2. application_titles에는 실제 합의된 적용사항만 넣는다.",
+        "3. application_reasons는 근거를 문장 단위로 정리한다.",
         "",
         "[출력 JSON 구조]",
         "{",
@@ -110,45 +109,44 @@ SUMMARY_ONLY_PROMPT = "\n".join(
         '    "meeting_info": { "title": "...", "purpose": "...", "duration": "..." },',
         '    "topics": ["논의된 모든 주제 리스트"],',
         '    "core_context": ["프로젝트 배경 및 제약 사항"],',
-        '    "final_decisions_list": ["생성된 모든 결정사항 타이틀 리스트"],',
-        '    "all_decision_reasons": [',
-        '      "모든 결정사항의 근거를 통합하여 정렬한 리스트"',
+        '    "application_titles": ["생성된 모든 적용사항 타이틀 리스트"],',
+        '    "application_reasons": [',
+        '      "모든 적용사항의 근거를 통합하여 정렬한 리스트"',
         "    ]",
         "  }",
         "}",
     ]
 )
 
-DECISION_CARDS_ONLY_PROMPT = "\n".join(
+APPLICATIONS_ONLY_PROMPT = "\n".join(
     [
         "당신은 Whylog 프로젝트의 수석 분석가입니다.",
-        "아래 STT 데이터를 바탕으로 결정사항 카드만 구조화하세요.",
+        "아래 STT 데이터를 바탕으로 적용사항 목록만 구조화하세요.",
         "",
-        "[정책 1: Decision 생성]",
-        "1. 명확한 결론이 있는 합의만 decision_cards에 포함한다.",
+        "[정책 1: 적용사항 생성]",
+        "1. 명확한 결론이 있는 합의만 applications에 포함한다.",
         "2. 결론 없는 토론/잡담은 제외한다.",
-        "3. 주제가 다르면 별도 카드로 분리한다.",
+        "3. 실제 반영/실행 단위가 다르면 별도 적용사항으로 분리한다.",
         "",
         "[정책 2: 근거]",
         "1. 기술/비용/운영/리스크/성능 관련 근거를 우선한다.",
         "2. 1 근거 = 1 문장 원칙을 지킨다.",
         "",
         "[정책 3: 타임라인]",
-        "1. 이슈제기 -> 대안논의 -> 최종합의 순서를 따른다.",
+        "1. 이슈제기 -> 대안논의 -> 적용합의 순서를 따른다.",
         "2. 실제 발화 원문과 화자 ID를 포함한다.",
         "3. content는 간략한 한 문장으로 작성한다.",
         "",
         "[출력 JSON 구조]",
         "{",
-        '  "decision_cards": [',
+        '  "applications": [',
         "    {",
-        '      "decision_title": "결정 사항 명칭",',
-        '      "applied_items": ["수행해야 할 액션 아이템"],',
-        '      "decision_reasons": ["해당 결정의 근거 (1근거=1문장)"],',
+        '      "application_title": "커밋과 연결될 적용사항 명칭",',
+        '      "application_reasons": ["해당 적용사항의 근거 (1근거=1문장)"],',
         '      "timeline": [',
         "        {",
         '          "timestamp": "...",',
-        '          "step": "이슈제기/대안논의/최종합의",',
+        '          "step": "이슈제기/대안논의/적용합의",',
         '          "speaker_id": "Speaker 0",',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
@@ -156,18 +154,18 @@ DECISION_CARDS_ONLY_PROMPT = "\n".join(
         "      ]",
         "    }",
         "  ],",
-        '  "other_mentions": ["결정되지 않은 기술적 제언 및 미래 과제"]',
+        '  "other_mentions": ["적용사항으로 확정되지 않은 기술적 제언 및 미래 과제"]',
         "}",
     ]
 )
 
 
 class _SummaryOnlyResponse(BaseModel):
-    overall_analysis: OverallAnalysis = Field(default_factory=OverallAnalysis)
+    overall_analysis: MeetingAnalysis = Field(default_factory=MeetingAnalysis)
 
 
-class _DecisionCardsOnlyResponse(BaseModel):
-    decision_cards: list[DecisionCard] = Field(default_factory=list)
+class _ApplicationsOnlyResponse(BaseModel):
+    applications: list[Application] = Field(default_factory=list)
     other_mentions: list[str] = Field(default_factory=list)
 
 
@@ -178,10 +176,10 @@ def _clean_json_response(result_text: str) -> str:
 
 
 def _build_prompt(stt_data: list[dict]) -> str:
-    # 전체 의사결정 추출용 프롬프트 생성
+    # 전체 회의 분석 결과 추출용 프롬프트 생성
     stt_json = json.dumps(stt_data, ensure_ascii=False)
     return (
-        f"{DECISION_POLICY_PROMPT}\n\n"
+        f"{APPLICATION_POLICY_PROMPT}\n\n"
         f"[STT 데이터]: {stt_json}\n\n"
         "반드시 JSON만 반환하세요. 마크다운 코드블록은 사용하지 마세요."
     )
@@ -197,11 +195,11 @@ def _build_summary_prompt(stt_data: list[dict]) -> str:
     )
 
 
-def _build_decision_cards_prompt(stt_data: list[dict]) -> str:
-    # decision_cards/other_mentions 전용 프롬프트 생성
+def _build_applications_prompt(stt_data: list[dict]) -> str:
+    # applications/other_mentions 전용 프롬프트 생성
     stt_json = json.dumps(stt_data, ensure_ascii=False)
     return (
-        f"{DECISION_CARDS_ONLY_PROMPT}\n\n"
+        f"{APPLICATIONS_ONLY_PROMPT}\n\n"
         f"[STT 데이터]: {stt_json}\n\n"
         "반드시 JSON만 반환하세요. 마크다운 코드블록은 사용하지 마세요."
     )
@@ -372,7 +370,7 @@ def _infer_speaker_id(
 
 
 def _normalize_timeline_speaker_ids(
-    result: DecisionExtractionResult,
+    result: MeetingAnalysisResult,
     segments: list[TranscribeSegment],
 ) -> None:
     # LLM이 생성한 잘못된 speaker_id를 가능한 범위에서 보정
@@ -381,8 +379,8 @@ def _normalize_timeline_speaker_ids(
     corrected_count = 0
     unresolved_count = 0
 
-    for card in result.decision_cards:
-        for item in card.timeline:
+    for application in result.applications:
+        for item in application.timeline:
             if item.speaker_id in valid_speaker_set:
                 continue
 
@@ -414,17 +412,17 @@ def _normalize_timeline_speaker_ids(
         )
 
 
-def _synchronize_overall_with_cards(result: DecisionExtractionResult) -> None:
-    # overall_analysis를 decision_cards 기준으로 재정렬/동기화
+def _synchronize_overall_with_applications(result: MeetingAnalysisResult) -> None:
+    # overall_analysis를 applications 기준으로 재정렬/동기화
     titles = [
-        card.decision_title.strip()
-        for card in result.decision_cards
-        if card.decision_title and card.decision_title.strip()
+        application.application_title.strip()
+        for application in result.applications
+        if application.application_title and application.application_title.strip()
     ]
     reasons: list[str] = []
     seen_reasons: set[str] = set()
-    for card in result.decision_cards:
-        for reason in card.decision_reasons:
+    for application in result.applications:
+        for reason in application.application_reasons:
             normalized_reason = " ".join((reason or "").split())
             if not normalized_reason:
                 continue
@@ -433,36 +431,36 @@ def _synchronize_overall_with_cards(result: DecisionExtractionResult) -> None:
             seen_reasons.add(normalized_reason)
             reasons.append(normalized_reason)
 
-    result.overall_analysis.final_decisions_list = titles
-    result.overall_analysis.all_decision_reasons = reasons
+    result.overall_analysis.application_titles = titles
+    result.overall_analysis.application_reasons = reasons
 
 
-def build_decision_result(
-    overall_analysis: OverallAnalysis,
-    cards_result: DecisionExtractionResult,
-) -> DecisionExtractionResult:
-    # 요약 결과와 카드 결과를 하나의 최종 DTO로 결합
-    result = DecisionExtractionResult(
+def build_analysis_result(
+    overall_analysis: MeetingAnalysis,
+    applications_result: MeetingAnalysisResult,
+) -> MeetingAnalysisResult:
+    # 요약 결과와 적용사항 결과를 하나의 최종 DTO로 결합
+    result = MeetingAnalysisResult(
         overall_analysis=overall_analysis,
-        decision_cards=cards_result.decision_cards,
-        other_mentions=cards_result.other_mentions,
+        applications=applications_result.applications,
+        other_mentions=applications_result.other_mentions,
     )
-    _synchronize_overall_with_cards(result)
+    _synchronize_overall_with_applications(result)
     return result
 
 
-async def extract_decisions(
+async def extract_meeting_analysis(
     segments: list[TranscribeSegment],
-) -> DecisionExtractionResult:
-    # 요약 + 카드 추출을 순차 실행해 최종 결과 반환
+) -> MeetingAnalysisResult:
+    # 요약 + 적용사항 추출을 순차 실행해 최종 결과 반환
     overall_analysis = await extract_overall_analysis(segments)
-    cards_result = await extract_decision_cards_only(segments)
-    return build_decision_result(overall_analysis, cards_result)
+    applications_result = await extract_applications_only(segments)
+    return build_analysis_result(overall_analysis, applications_result)
 
 
 async def extract_overall_analysis(
     segments: list[TranscribeSegment],
-) -> OverallAnalysis:
+) -> MeetingAnalysis:
     # 회의 요약(overall_analysis)만 추출
     stt_data = [segment.model_dump(mode="json") for segment in segments]
     prompt = _build_summary_prompt(stt_data)
@@ -478,24 +476,24 @@ async def extract_overall_analysis(
         ) from e
 
 
-async def extract_decision_cards_only(
+async def extract_applications_only(
     segments: list[TranscribeSegment],
-) -> DecisionExtractionResult:
-    # decision_cards/other_mentions만 추출 후 speaker_id 보정
+) -> MeetingAnalysisResult:
+    # applications/other_mentions만 추출 후 speaker_id 보정
     stt_data = [segment.model_dump(mode="json") for segment in segments]
-    prompt = _build_decision_cards_prompt(stt_data)
-    parsed = await _request_gemini_json(prompt, "Gemini 결정사항 카드 추출")
+    prompt = _build_applications_prompt(stt_data)
+    parsed = await _request_gemini_json(prompt, "Gemini 적용사항 추출")
 
     try:
-        cards_result = _DecisionCardsOnlyResponse.model_validate(parsed)
-        result = DecisionExtractionResult(
-            decision_cards=cards_result.decision_cards,
-            other_mentions=cards_result.other_mentions,
+        applications_result = _ApplicationsOnlyResponse.model_validate(parsed)
+        result = MeetingAnalysisResult(
+            applications=applications_result.applications,
+            other_mentions=applications_result.other_mentions,
         )
         _normalize_timeline_speaker_ids(result, segments)
         return result
     except Exception as e:
         raise AppServiceError(
-            f"Gemini 결정사항 카드 JSON 파싱/검증 실패: {e}",
+            f"Gemini 적용사항 JSON 파싱/검증 실패: {e}",
             status_code=502,
         ) from e

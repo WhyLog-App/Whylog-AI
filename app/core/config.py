@@ -25,14 +25,14 @@ class AppSettings(BaseModel):
         default_factory=lambda: os.getenv("COMMIT_COLLECTION", "commit_embeddings")
     )
 
-    # Decision Embedding
-    decision_embedding_model: str = Field(
-        default_factory=lambda: os.getenv(
-            "DECISION_EMBEDDING_MODEL", "gemini-embedding-001"
-        )
+    # Embedding
+    embedding_model: str = Field(
+        default_factory=lambda: os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
     )
-    decision_collection: str = Field(
-        default_factory=lambda: os.getenv("DECISION_COLLECTION", "decision_embeddings")
+    application_collection: str = Field(
+        default_factory=lambda: os.getenv(
+            "APPLICATION_COLLECTION", "application_embeddings"
+        )
     )
 
 
