@@ -6,9 +6,9 @@ from uuid import uuid4
 from app.domains.pipeline.schemas import (
     RunPhase,
     RunStatus,
-    TranscribeDecisionResponse,
-    TranscribeDecisionRunAccepted,
-    TranscribeDecisionRunStatus,
+    TranscribeAnalysisResponse,
+    TranscribeAnalysisRunAccepted,
+    TranscribeAnalysisRunStatus,
 )
 
 RUN_TTL = timedelta(hours=24)
@@ -26,7 +26,7 @@ class _RunRecord:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
-    result: TranscribeDecisionResponse | None = None
+    result: TranscribeAnalysisResponse | None = None
 
 
 _runs: dict[str, _RunRecord] = {}
@@ -75,9 +75,9 @@ def _cleanup_runs_locked() -> None:
         _runs.pop(run_id, None)
 
 
-def _to_run_status(run: _RunRecord) -> TranscribeDecisionRunStatus:
+def _to_run_status(run: _RunRecord) -> TranscribeAnalysisRunStatus:
     # 내부 저장 레코드를 외부 응답 모델로 변환
-    return TranscribeDecisionRunStatus(
+    return TranscribeAnalysisRunStatus(
         run_id=run.run_id,
         status=run.status,
         phase=run.phase,
@@ -94,7 +94,7 @@ def _to_run_status(run: _RunRecord) -> TranscribeDecisionRunStatus:
 async def create_run(
     meeting_id: str | None,
     project_id: str | None,
-) -> TranscribeDecisionRunAccepted:
+) -> TranscribeAnalysisRunAccepted:
     # 비동기 파이프라인 실행 레코드를 생성
     async with _lock:
         _cleanup_runs_locked()
@@ -107,7 +107,7 @@ async def create_run(
             project_id=project_id,
             submitted_at=_utc_now(),
         )
-        return TranscribeDecisionRunAccepted(
+        return TranscribeAnalysisRunAccepted(
             run_id=run_id,
             status="queued",
             phase="queued",
@@ -131,7 +131,7 @@ async def mark_run_processing(run_id: str) -> None:
 async def mark_run_phase(
     run_id: str,
     phase: RunPhase,
-    result: TranscribeDecisionResponse | None = None,
+    result: TranscribeAnalysisResponse | None = None,
 ) -> None:
     # 단계별 중간 결과를 저장하며 phase 갱신
     async with _lock:
@@ -143,14 +143,14 @@ async def mark_run_phase(
             run.result = result.model_copy(deep=True)
 
 
-async def mark_run_completed(run_id: str, result: TranscribeDecisionResponse) -> None:
+async def mark_run_completed(run_id: str, result: TranscribeAnalysisResponse) -> None:
     # run을 최종 완료 상태로 전환
     async with _lock:
         run = _runs.get(run_id)
         if not run:
             return
         run.status = "completed"
-        run.phase = "decisions_ready"
+        run.phase = "applications_ready"
         run.result = result.model_copy(deep=True)
         run.error = None
         run.finished_at = _utc_now()
@@ -168,7 +168,7 @@ async def mark_run_failed(run_id: str, error: str) -> None:
         run.finished_at = _utc_now()
 
 
-async def get_run_status(run_id: str) -> TranscribeDecisionRunStatus | None:
+async def get_run_status(run_id: str) -> TranscribeAnalysisRunStatus | None:
     # run 현재 상태/결과를 조회
     async with _lock:
         _cleanup_runs_locked()

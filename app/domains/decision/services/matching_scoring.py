@@ -186,14 +186,14 @@ class ScoreBreakdown:
 @dataclass(frozen=True)
 class ScoringInput:
     semantic_distance: float | None
-    decision_text: str
+    application_text: str
     commit_text: str
     commit_message: str
-    decision_direction_labels: set[str]
+    application_direction_labels: set[str]
     commit_direction_labels: set[str]
-    decision_keywords: set[str]
+    application_keywords: set[str]
     commit_keywords: set[str]
-    decision_modules: set[str]
+    application_modules: set[str]
     commit_modules: set[str]
 
 
@@ -283,15 +283,15 @@ def extract_module_tokens(text: str, csv_modules: str | None = None) -> set[str]
 
 
 def is_opposite_direction(
-    decision_labels: set[str],
+    application_labels: set[str],
     commit_labels: set[str],
 ) -> bool:
-    if not decision_labels or not commit_labels:
+    if not application_labels or not commit_labels:
         return False
     return (
-        "positive" in decision_labels
+        "positive" in application_labels
         and "negative" in commit_labels
-        or "negative" in decision_labels
+        or "negative" in application_labels
         and "positive" in commit_labels
     )
 
@@ -311,10 +311,10 @@ def score_semantic(
 
 
 def score_keyword_match(
-    decision_keywords: set[str],
+    application_keywords: set[str],
     commit_keywords: set[str],
 ) -> int:
-    overlap_count = len(decision_keywords & commit_keywords)
+    overlap_count = len(application_keywords & commit_keywords)
     if overlap_count <= 0:
         return 0
     if overlap_count == 1:
@@ -325,22 +325,22 @@ def score_keyword_match(
 
 
 def score_context_match(
-    decision_modules: set[str],
+    application_modules: set[str],
     commit_modules: set[str],
 ) -> int:
-    if not decision_modules or not commit_modules:
+    if not application_modules or not commit_modules:
         return 0
 
-    overlap = decision_modules & commit_modules
+    overlap = application_modules & commit_modules
     if len(overlap) >= 2:
         return 20
     if len(overlap) == 1:
         return 10
 
     # 간접 연관: prefix/substring 기반 1회라도 발견되면 10점.
-    for decision_token in decision_modules:
+    for application_token in application_modules:
         for commit_token in commit_modules:
-            if decision_token in commit_token or commit_token in decision_token:
+            if application_token in commit_token or commit_token in application_token:
                 return 10
     return 0
 
@@ -359,15 +359,15 @@ def is_abstract_commit_message(commit_message: str) -> bool:
     return False
 
 
-def is_ambiguous_decision(
-    decision_text: str,
-    decision_keywords: set[str],
-    decision_modules: set[str],
+def is_ambiguous_application(
+    application_text: str,
+    application_keywords: set[str],
+    application_modules: set[str],
 ) -> bool:
-    decision_tokens = extract_text_tokens(decision_text)
-    if len(decision_tokens) < 3:
+    application_tokens = extract_text_tokens(application_text)
+    if len(application_tokens) < 3:
         return True
-    if not decision_keywords and not decision_modules:
+    if not application_keywords and not application_modules:
         return True
     return False
 
@@ -411,15 +411,15 @@ def build_connection_reason(score: ScoreBreakdown) -> str:
 
 def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
     opposite_direction = is_opposite_direction(
-        payload.decision_direction_labels,
+        payload.application_direction_labels,
         payload.commit_direction_labels,
     )
     semantic = score_semantic(
         payload.semantic_distance,
         opposite_direction=opposite_direction,
     )
-    keyword = score_keyword_match(payload.decision_keywords, payload.commit_keywords)
-    context = score_context_match(payload.decision_modules, payload.commit_modules)
+    keyword = score_keyword_match(payload.application_keywords, payload.commit_keywords)
+    context = score_context_match(payload.application_modules, payload.commit_modules)
 
     goal_mismatch = keyword >= 15 and semantic <= 10
     if goal_mismatch:
@@ -438,10 +438,10 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
     penalty = 0
     if is_abstract_commit_message(payload.commit_message):
         penalty += 10
-    if is_ambiguous_decision(
-        payload.decision_text,
-        payload.decision_keywords,
-        payload.decision_modules,
+    if is_ambiguous_application(
+        payload.application_text,
+        payload.application_keywords,
+        payload.application_modules,
     ):
         penalty += 10
 

@@ -4,29 +4,32 @@ from fastapi import APIRouter, Body
 
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.decision.schemas import (
-    DecisionEmbeddingRequest,
-    DecisionEmbeddingResponse,
-    DecisionExtractRequest,
-    DecisionExtractResponse,
+    ApplicationEmbeddingRequest,
+    ApplicationEmbeddingResponse,
+    MeetingAnalysisRequest,
+    MeetingAnalysisResponse,
 )
-from app.domains.decision.services.embedding import embed_and_store_decisions
-from app.domains.decision.services.extraction import extract_decisions
+from app.domains.decision.services.embedding import embed_and_store_applications
+from app.domains.decision.services.extraction import extract_meeting_analysis
 
-router = APIRouter(prefix="/decisions", tags=["decision"])
+router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
 
 
 @router.post(
     "/extract",
-    response_model=ApiResponse[DecisionExtractResponse],
-    summary="전사 세그먼트 기반 의사결정 재추출",
+    response_model=ApiResponse[MeetingAnalysisResponse],
+    summary="전사 세그먼트 기반 회의 분석 재추출",
     description=(
         "저장된 transcript_segments(JSON)만으로 "
-        "의사결정 결과를 추출합니다. "
+        "회의 분석 결과와 적용사항 목록을 추출합니다. "
         "오디오 재업로드 없이 프롬프트 변경 실험, "
         "실패 재시도, 운영 재처리에 사용합니다.\n\n"
         "팀 공유 FAQ:\n"
         "- timeline.speaker_id가 null일 수 있습니다(오탐 방지 목적).\n"
         "- summary_ready 단계 값과 completed 단계 값은 일부 필드가 다를 수 있습니다.\n"
+        "- 이 API가 생성하는 applications[].application_id는 보통 null입니다. "
+        "Spring이 적용사항을 DB에 저장한 뒤 발급한 applicationId를 "
+        "/api/meeting-analysis/embeddings 요청의 application_id로 전달해야 합니다.\n"
         "- 이 API는 completed 결과 재생성/프롬프트 재실험 용도로 권장합니다."
     ),
     responses={
@@ -42,16 +45,112 @@ router = APIRouter(prefix="/decisions", tags=["decision"])
             "model": ApiErrorResponse,
             "description": "Gemini 연결/응답/JSON 파싱 오류.",
         },
+        200: {
+            "description": "회의 분석 재추출 성공.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "MEETING_ANALYSIS_200",
+                        "message": "회의 분석 재추출이 완료되었습니다.",
+                        "result": {
+                            "meeting_id": "meeting-123",
+                            "project_id": "project-abc",
+                            "analysis_result": {
+                                "overall_analysis": {
+                                    "meeting_info": {
+                                        "title": "API 문서화 개선 회의",
+                                        "purpose": (
+                                            "Swagger 에러 응답 예시 개선 방향 합의"
+                                        ),
+                                        "duration": "00:12:30",
+                                    },
+                                    "topics": ["Swagger 에러 응답 문서화"],
+                                    "core_context": [
+                                        "프론트에서 에러 응답 형식을 예측하기 어렵다."
+                                    ],
+                                    "application_titles": [
+                                        "Swagger 에러 응답 예시 문서화"
+                                    ],
+                                    "application_reasons": [
+                                        (
+                                            "API 사용자가 에러 응답 형식을 "
+                                            "쉽게 확인해야 한다."
+                                        )
+                                    ],
+                                },
+                                "applications": [
+                                    {
+                                        "application_id": None,
+                                        "application_title": (
+                                            "Swagger 에러 응답 예시 문서화"
+                                        ),
+                                        "application_reasons": [
+                                            (
+                                                "API 사용자가 에러 응답 형식을 "
+                                                "쉽게 확인해야 한다."
+                                            )
+                                        ],
+                                        "timeline": [
+                                            {
+                                                "timestamp": "00:03:12",
+                                                "step": "이슈제기",
+                                                "speaker_id": "Speaker 0",
+                                                "content": (
+                                                    "Swagger에서 에러 응답 예시가 "
+                                                    "부족하다는 문제가 제기됨"
+                                                ),
+                                                "utterance": (
+                                                    "Swagger에 에러 응답 예시가 "
+                                                    "잘 안 보여요."
+                                                ),
+                                            },
+                                            {
+                                                "timestamp": "00:06:20",
+                                                "step": "대안논의",
+                                                "speaker_id": "Speaker 1",
+                                                "content": (
+                                                    "어노테이션 기반 예시 "
+                                                    "문서화가 논의됨"
+                                                ),
+                                                "utterance": (
+                                                    "어노테이션으로 예시를 붙이면 "
+                                                    "관리하기 좋겠습니다."
+                                                ),
+                                            },
+                                            {
+                                                "timestamp": "00:09:40",
+                                                "step": "적용합의",
+                                                "speaker_id": "Speaker 0",
+                                                "content": (
+                                                    "ApiErrorCodeExample 어노테이션을 "
+                                                    "추가하기로 합의함"
+                                                ),
+                                                "utterance": (
+                                                    "그럼 ApiErrorCodeExample을 "
+                                                    "추가하는 걸로 하죠."
+                                                ),
+                                            },
+                                        ],
+                                    }
+                                ],
+                                "other_mentions": [],
+                            },
+                        },
+                    }
+                }
+            },
+        },
     },
 )
-async def extract_decisions_from_transcript(
+async def extract_meeting_analysis_from_transcript(
     payload: Annotated[
-        DecisionExtractRequest,
+        MeetingAnalysisRequest,
         Body(
             description=(
                 "Spring 연동 가이드:\n"
                 "- 본 API는 오디오 업로드 없이, 이미 저장된 transcript_segments로 "
-                "의사결정을 재추출/재시도할 때 사용합니다.\n"
+                "회의 분석 결과와 적용사항을 재추출/재시도할 때 사용합니다.\n"
                 "- 요청 본문은 반드시 객체형(JSON object)이며 "
                 "transcript_segments 필드를 포함해야 합니다.\n"
                 "- meeting_id/project_id는 선택이며, "
@@ -82,31 +181,37 @@ async def extract_decisions_from_transcript(
             },
         ),
     ],
-) -> ApiResponse[DecisionExtractResponse]:
-    # 전달받은 전사 세그먼트로 의사결정 결과를 재추출
-    decision_result = await extract_decisions(payload.transcript_segments)
+) -> ApiResponse[MeetingAnalysisResponse]:
+    # 전달받은 전사 세그먼트로 회의 분석 결과를 재추출
+    analysis_result = await extract_meeting_analysis(payload.transcript_segments)
 
     return ok_response(
-        DecisionExtractResponse(
+        MeetingAnalysisResponse(
             meeting_id=payload.meeting_id,
             project_id=payload.project_id,
-            decision_result=decision_result,
+            analysis_result=analysis_result,
         ),
-        code="DECISION_200",
-        message="의사결정 재추출이 완료되었습니다.",
+        code="MEETING_ANALYSIS_200",
+        message="회의 분석 재추출이 완료되었습니다.",
     )
 
 
 @router.post(
     "/embeddings",
-    response_model=ApiResponse[DecisionEmbeddingResponse],
-    summary="결정사항 임베딩 생성 및 ChromaDB 저장",
+    response_model=ApiResponse[ApplicationEmbeddingResponse],
+    summary="적용사항 임베딩 생성 및 ChromaDB 저장",
     description=(
-        "의사결정 추출 결과(decision_cards)를 applied_item 단위로 정규화한 뒤, "
+        "회의 분석 결과(applications)를 application 단위로 정규화한 뒤, "
         "Gemini Embedding API로 벡터를 생성하고 ChromaDB에 저장합니다.\n\n"
+        "Spring 연동 순서:\n"
+        "1) /api/transcribe/applications/runs 또는 /api/meeting-analysis/extract로 "
+        "application_id가 없는 적용사항 목록을 생성합니다.\n"
+        "2) Spring이 applications를 DB에 저장하고 applicationId를 발급합니다.\n"
+        "3) 이 API를 호출할 때 각 applications[].application_id에 "
+        "Spring applicationId를 넣어 전달합니다.\n\n"
         "- 동일 meeting_id로 재호출 시 기존 문서를 삭제 후 새로 저장합니다.\n"
-        "- 문서 ID 형식: `{meeting_id}_card{i}_item{j}`\n"
-        "- 임베딩 텍스트: `title: 제목 | text: 적용사항: 항목 | 근거: 핵심근거`"
+        "- 문서 ID 형식: `{meeting_id}_application{i}`\n"
+        "- 임베딩 텍스트: `title: 제목 | text: 적용사항: 제목 | 근거: 핵심근거`"
     ),
     responses={
         422: {
@@ -123,27 +228,44 @@ async def extract_decisions_from_transcript(
         },
     },
 )
-async def create_decision_embeddings(
+async def create_application_embeddings(
     payload: Annotated[
-        DecisionEmbeddingRequest,
+        ApplicationEmbeddingRequest,
         Body(
             examples={
-                "minimal": {
-                    "summary": "최소 요청 예시",
+                "spring_application_id": {
+                    "summary": "권장: Spring applicationId 포함",
                     "value": {
                         "meeting_id": "meeting-123",
-                        "decision_result": {
-                            "decision_cards": [
+                        "project_id": "project-abc",
+                        "analysis_result": {
+                            "applications": [
                                 {
-                                    "decision_title": "Redis 캐시 도입",
-                                    "applied_items": [
-                                        "사용자 세션 캐싱 적용",
-                                        "API 응답 캐싱 적용",
+                                    "application_id": 101,
+                                    "application_title": (
+                                        "Swagger 에러 응답 예시 문서화"
+                                    ),
+                                    "application_reasons": [
+                                        (
+                                            "API 사용자가 에러 응답 형식을 "
+                                            "쉽게 확인해야 한다."
+                                        ),
                                     ],
-                                    "decision_reasons": [
-                                        "DB 부하를 줄여 응답 속도를 개선한다.",
+                                    "timeline": [
+                                        {
+                                            "timestamp": "00:09:40",
+                                            "step": "적용합의",
+                                            "speaker_id": "Speaker 0",
+                                            "content": (
+                                                "ApiErrorCodeExample 어노테이션을 "
+                                                "추가하기로 합의함"
+                                            ),
+                                            "utterance": (
+                                                "그럼 ApiErrorCodeExample을 "
+                                                "추가하는 걸로 하죠."
+                                            ),
+                                        }
                                     ],
-                                    "timeline": [],
                                 }
                             ],
                             "other_mentions": [],
@@ -153,21 +275,21 @@ async def create_decision_embeddings(
             },
         ),
     ],
-) -> ApiResponse[DecisionEmbeddingResponse]:
-    documents = await embed_and_store_decisions(
+) -> ApiResponse[ApplicationEmbeddingResponse]:
+    documents = await embed_and_store_applications(
         meeting_id=payload.meeting_id,
         project_id=payload.project_id,
-        decision_result=payload.decision_result,
+        analysis_result=payload.analysis_result,
     )
 
     return ok_response(
-        DecisionEmbeddingResponse(
+        ApplicationEmbeddingResponse(
             meeting_id=payload.meeting_id,
             project_id=payload.project_id,
             total_documents=len(documents),
             document_ids=[doc.document_id for doc in documents],
             documents=documents,
         ),
-        code="DECISION_EMBEDDING_200",
-        message="결정사항 임베딩이 생성 및 저장되었습니다.",
+        code="APPLICATION_EMBEDDING_200",
+        message="적용사항 임베딩이 생성 및 저장되었습니다.",
     )
