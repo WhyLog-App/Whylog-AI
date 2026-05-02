@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
@@ -7,6 +7,15 @@ from app.domains.commit.schemas import (
     ApplicationCommitMatchResponse,
     CommitAnalyzeRequest,
     CommitAnalyzeResponse,
+    CommitAnalyzeRunAccepted,
+    CommitAnalyzeRunStatus,
+)
+from app.domains.commit.services.analyze_runs import (
+    create_commit_analyze_run as create_commit_analyze_run_record,
+)
+from app.domains.commit.services.analyze_runs import (
+    get_commit_analyze_run_status,
+    run_commit_analyze_pipeline,
 )
 from app.domains.commit.services.diff_filter import filter_changed_files
 from app.domains.commit.services.matching import match_applications_with_commits
@@ -16,6 +25,21 @@ from app.domains.commit.services.summarize import (
 )
 
 router = APIRouter(prefix="/commit", tags=["commit"])
+
+COMMIT_ANALYZE_ASYNC_GUIDE = (
+    "Spring 연동 가이드:\n"
+    "1) 레포지토리 커밋 동기화 시 커밋별로 "
+    "POST /api/commit/analyze/runs를 호출합니다.\n"
+    "2) 응답의 run_id로 GET /api/commit/analyze/runs/{run_id}를 폴링합니다.\n"
+    "3) phase=summary_ready부터 커밋 요약을 확인할 수 있습니다.\n"
+    "4) status=completed && phase=embedding_ready 확인 후 "
+    "POST /api/commit/match를 호출합니다.\n"
+    "5) embedding_ready 전에는 방금 분석한 커밋이 추천 후보에 "
+    "아직 반영되지 않았을 수 있습니다.\n"
+    "6) status=failed 시 error를 기록하고 필요 시 재시도합니다.\n"
+    "7) run 조회 404는 만료/정리/재기동 유실 가능성이 있으므로 "
+    "재요청 정책을 둡니다."
+)
 
 
 # POST /api/commit/analyze — Spring에서 커밋 데이터를 받아 LLM 요약 후 반환
@@ -97,6 +121,131 @@ async def analyze_commit(
     )
     return ok_response(
         CommitAnalyzeResponse(commit_id=request.commit_id, summary=summary)
+    )
+
+
+@router.post(
+    "/analyze/runs",
+    response_model=ApiResponse[CommitAnalyzeRunAccepted],
+    status_code=202,
+    summary="커밋 분석 비동기 실행 생성",
+    description=(
+        "커밋 요약과 임베딩 저장을 백그라운드 run으로 실행합니다. "
+        "즉시 run_id를 반환하며, 상태는 "
+        "GET /api/commit/analyze/runs/{run_id}로 조회합니다.\n\n"
+        "기존 /api/commit/analyze는 즉시 요약 응답 후 임베딩을 "
+        "BackgroundTasks로 저장하므로, 안정적인 매칭 플로우에서는 "
+        "이 비동기 run API 사용을 권장합니다.\n\n"
+        f"{COMMIT_ANALYZE_ASYNC_GUIDE}"
+    ),
+    responses={
+        202: {
+            "description": "커밋 분석 비동기 작업이 접수되었습니다.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "COMMIT_ANALYZE_202",
+                        "message": "커밋 분석 비동기 실행이 접수되었습니다.",
+                        "result": {
+                            "run_id": "550e8400e29b41d4a716446655440000",
+                            "status": "queued",
+                            "phase": "queued",
+                            "commit_id": 4,
+                            "commit_hash": ("cb2222fb915f9dfbd5b22eded57dadd57f225798"),
+                            "repository_id": 1,
+                        },
+                    }
+                }
+            },
+        },
+        422: {
+            "model": ApiErrorResponse,
+            "description": "요청 스키마 검증 실패(예: message 누락, 빈 파일 목록).",
+        },
+    },
+)
+async def create_commit_analyze_run(
+    request: CommitAnalyzeRequest,
+    background_tasks: BackgroundTasks,
+) -> ApiResponse[CommitAnalyzeRunAccepted]:
+    accepted = await create_commit_analyze_run_record(request)
+    background_tasks.add_task(run_commit_analyze_pipeline, accepted.run_id)
+    return ok_response(
+        accepted,
+        code="COMMIT_ANALYZE_202",
+        message="커밋 분석 비동기 실행이 접수되었습니다.",
+    )
+
+
+@router.get(
+    "/analyze/runs/{run_id}",
+    response_model=ApiResponse[CommitAnalyzeRunStatus],
+    summary="커밋 분석 비동기 실행 상태 조회",
+    description=(
+        "run_id 기준으로 커밋 분석 상태를 조회합니다. "
+        "phase 값은 queued/summarizing/summary_ready/embedding/"
+        "embedding_ready/failed 중 하나입니다.\n\n"
+        "Spring 처리 규칙:\n"
+        "- phase=summary_ready: 커밋 summary 사용 가능\n"
+        "- phase=embedding: ChromaDB 저장 진행 중\n"
+        "- status=completed, phase=embedding_ready: /api/commit/match 호출 권장\n"
+        "- status=failed: error 기준으로 재시도/장애 처리\n\n"
+        f"{COMMIT_ANALYZE_ASYNC_GUIDE}"
+    ),
+    responses={
+        200: {
+            "description": "현재 커밋 분석 실행 상태 또는 중간/최종 결과.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "isSuccess": True,
+                        "code": "COMMIT_ANALYZE_200",
+                        "message": "커밋 분석 비동기 실행 상태 조회에 성공했습니다.",
+                        "result": {
+                            "run_id": "550e8400e29b41d4a716446655440000",
+                            "status": "completed",
+                            "phase": "embedding_ready",
+                            "commit_id": 4,
+                            "commit_hash": ("cb2222fb915f9dfbd5b22eded57dadd57f225798"),
+                            "repository_id": 1,
+                            "submitted_at": "2026-04-27T09:00:00Z",
+                            "started_at": "2026-04-27T09:00:01Z",
+                            "finished_at": "2026-04-27T09:00:10Z",
+                            "error": None,
+                            "result": {
+                                "commit_id": 4,
+                                "commit_hash": (
+                                    "cb2222fb915f9dfbd5b22eded57dadd57f225798"
+                                ),
+                                "repository_id": 1,
+                                "summary": (
+                                    "Swagger 에러 문서화를 위한 "
+                                    "ApiErrorCodeExample 어노테이션을 추가했습니다."
+                                ),
+                                "embedding_ready": True,
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        404: {
+            "model": ApiErrorResponse,
+            "description": "해당 run_id를 찾을 수 없습니다(만료/정리 포함).",
+        },
+    },
+)
+async def get_commit_analyze_run(
+    run_id: str,
+) -> ApiResponse[CommitAnalyzeRunStatus]:
+    status = await get_commit_analyze_run_status(run_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="해당 실행을 찾을 수 없습니다.")
+    return ok_response(
+        status,
+        code="COMMIT_ANALYZE_200",
+        message="커밋 분석 비동기 실행 상태 조회에 성공했습니다.",
     )
 
 
