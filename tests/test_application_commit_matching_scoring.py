@@ -1,4 +1,4 @@
-from app.domains.decision.services.matching_scoring import (
+from app.domains.meeting_analysis.services.matching_scoring import (
     ScoringInput,
     build_connection_reason,
     calculate_match_score,

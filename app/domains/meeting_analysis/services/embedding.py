@@ -6,7 +6,7 @@ from google import genai
 from app.core.chroma import get_application_collection
 from app.core.config import settings
 from app.core.errors import AppServiceError
-from app.domains.decision.schemas import (
+from app.domains.meeting_analysis.schemas import (
     EmbeddedDocument,
     MeetingAnalysisResult,
 )

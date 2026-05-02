@@ -1,4 +1,4 @@
-from app.domains.decision.schemas import (
+from app.domains.meeting_analysis.schemas import (
     Application,
     ApplicationEmbeddingRequest,
     ApplicationEmbeddingResponse,
