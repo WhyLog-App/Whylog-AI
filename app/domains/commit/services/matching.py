@@ -12,7 +12,7 @@ from app.domains.commit.schemas import (
     MatchedCommit,
     MatchScoreBreakdown,
 )
-from app.domains.decision.services.matching_scoring import (
+from app.domains.meeting_analysis.services.matching_scoring import (
     ScoringInput,
     calculate_match_score,
     extract_direction_labels_from_text,

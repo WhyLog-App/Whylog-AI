@@ -3,14 +3,14 @@ from typing import Annotated
 from fastapi import APIRouter, Body
 
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
-from app.domains.decision.schemas import (
+from app.domains.meeting_analysis.schemas import (
     ApplicationEmbeddingRequest,
     ApplicationEmbeddingResponse,
     MeetingAnalysisRequest,
     MeetingAnalysisResponse,
 )
-from app.domains.decision.services.embedding import embed_and_store_applications
-from app.domains.decision.services.extraction import extract_meeting_analysis
+from app.domains.meeting_analysis.services.embedding import embed_and_store_applications
+from app.domains.meeting_analysis.services.extraction import extract_meeting_analysis
 
 router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
 
