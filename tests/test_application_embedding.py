@@ -6,13 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.errors import AppServiceError
-from app.domains.decision.schemas import (
+from app.domains.meeting_analysis.schemas import (
     Application,
     EmbeddedDocument,
     MeetingAnalysis,
     MeetingAnalysisResult,
 )
-from app.domains.decision.services.embedding import (
+from app.domains.meeting_analysis.services.embedding import (
     build_embedding_documents,
     embed_and_store_applications,
 )
@@ -133,12 +133,12 @@ class TestEmbedAndStore:
 
         with (
             patch(
-                "app.domains.decision.services.embedding._generate_embeddings",
+                "app.domains.meeting_analysis.services.embedding._generate_embeddings",
                 new_callable=AsyncMock,
                 return_value=_mock_embedding(1),
             ),
             patch(
-                "app.domains.decision.services.embedding.get_application_collection",
+                "app.domains.meeting_analysis.services.embedding.get_application_collection",
                 return_value=mock_collection,
             ),
         ):
@@ -167,12 +167,12 @@ class TestEmbedAndStore:
 
         with (
             patch(
-                "app.domains.decision.services.embedding._generate_embeddings",
+                "app.domains.meeting_analysis.services.embedding._generate_embeddings",
                 new_callable=AsyncMock,
                 return_value=_mock_embedding(1),
             ),
             patch(
-                "app.domains.decision.services.embedding.get_application_collection",
+                "app.domains.meeting_analysis.services.embedding.get_application_collection",
                 return_value=mock_collection,
             ),
             caplog.at_level("WARNING"),
@@ -195,12 +195,12 @@ class TestEmbedAndStore:
 
         with (
             patch(
-                "app.domains.decision.services.embedding._generate_embeddings",
+                "app.domains.meeting_analysis.services.embedding._generate_embeddings",
                 new_callable=AsyncMock,
                 return_value=_mock_embedding(1),
             ),
             patch(
-                "app.domains.decision.services.embedding.get_application_collection",
+                "app.domains.meeting_analysis.services.embedding.get_application_collection",
                 return_value=mock_collection,
             ),
         ):
@@ -220,7 +220,7 @@ class TestEmbedAndStore:
         mock_collection.get.return_value = {"ids": ["mtg-empty_application0"]}
 
         with patch(
-            "app.domains.decision.services.embedding.get_application_collection",
+            "app.domains.meeting_analysis.services.embedding.get_application_collection",
             return_value=mock_collection,
         ):
             docs = await embed_and_store_applications("mtg-empty", None, result)
@@ -238,12 +238,12 @@ class TestEmbedAndStore:
 
         with (
             patch(
-                "app.domains.decision.services.embedding._generate_embeddings",
+                "app.domains.meeting_analysis.services.embedding._generate_embeddings",
                 new_callable=AsyncMock,
                 return_value=_mock_embedding(1),
             ),
             patch(
-                "app.domains.decision.services.embedding.get_application_collection",
+                "app.domains.meeting_analysis.services.embedding.get_application_collection",
                 return_value=mock_collection,
             ),
         ):
@@ -290,7 +290,7 @@ class TestApplicationEmbeddingEndpoint:
         ]
 
         with patch(
-            "app.domains.decision.router.embed_and_store_applications",
+            "app.domains.meeting_analysis.router.embed_and_store_applications",
             new_callable=AsyncMock,
             return_value=mock_docs,
         ):
@@ -326,7 +326,7 @@ class TestApplicationEmbeddingEndpoint:
     def test_service_failure_response(self):
         """서비스 레이어 예외 발생 시 502 표준 에러 포맷을 반환한다."""
         with patch(
-            "app.domains.decision.router.embed_and_store_applications",
+            "app.domains.meeting_analysis.router.embed_and_store_applications",
             new_callable=AsyncMock,
             side_effect=AppServiceError(
                 "Gemini 임베딩 생성 실패",
@@ -346,7 +346,7 @@ class TestApplicationEmbeddingEndpoint:
     def test_empty_applications_response(self):
         """적용사항이 비어도 200과 문서 수 0을 반환한다."""
         with patch(
-            "app.domains.decision.router.embed_and_store_applications",
+            "app.domains.meeting_analysis.router.embed_and_store_applications",
             new_callable=AsyncMock,
             return_value=[],
         ):

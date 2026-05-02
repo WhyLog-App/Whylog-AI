@@ -13,8 +13,8 @@ from fastapi import (
 
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
-from app.domains.decision.schemas import MeetingAnalysisResult
-from app.domains.decision.services.extraction import (
+from app.domains.meeting_analysis.schemas import MeetingAnalysisResult
+from app.domains.meeting_analysis.services.extraction import (
     build_analysis_result,
     extract_applications_only,
     extract_meeting_analysis,
@@ -25,7 +25,7 @@ from app.domains.pipeline.schemas import (
     TranscribeAnalysisRunAccepted,
     TranscribeAnalysisRunStatus,
 )
-from app.domains.pipeline.services.decision_runs import (
+from app.domains.pipeline.services.analysis_runs import (
     create_run,
     get_run_status,
     mark_run_completed,
