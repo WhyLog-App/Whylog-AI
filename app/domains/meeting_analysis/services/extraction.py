@@ -31,6 +31,27 @@ AMBIGUOUS_SHORT_UTTERANCES = {
     "ok",
     "okay",
 }
+GENERIC_MEETING_TITLE_KEYWORDS = {
+    "whylog",
+    "프로젝트",
+    "회의",
+    "미팅",
+    "기능",
+    "점검",
+    "테스트",
+    "확인",
+}
+GENERIC_MEETING_TITLES = {
+    "",
+    "데이터 없음",
+    "회의",
+    "미팅",
+    "회의록",
+    "Whylog 회의",
+    "Whylog 프로젝트 회의",
+    "Whylog 프로젝트 기능 점검 회의",
+    "Whylog meeting",
+}
 
 APPLICATION_POLICY_PROMPT = "\n".join(
     [
@@ -102,6 +123,12 @@ SUMMARY_ONLY_PROMPT = "\n".join(
         "1. 실제 회의 내용 기반으로만 작성하고 추측하지 않는다.",
         "2. application_titles에는 실제 합의된 적용사항만 넣는다.",
         "3. application_reasons는 근거를 문장 단위로 정리한다.",
+        "4. meeting_info.title은 회의 내용의 핵심 논의 대상/이슈/합의를",
+        "   12~35자 내외의 구체적인 한국어 제목으로 작성한다.",
+        "5. 'Whylog 프로젝트 회의', 'Whylog meeting', '기능 점검 회의',",
+        "   '데이터 없음'처럼 서비스명이나 일반 명사만 있는 제목은 금지한다.",
+        "6. title에는 가능하면 핵심 기능명, 오류명, 정책명, 연동 대상처럼",
+        "   검색 가능한 고유 단어를 포함한다.",
         "",
         "[출력 JSON 구조]",
         "{",
@@ -275,6 +302,67 @@ def _normalize_text(value: str) -> str:
     return " ".join((value or "").split())
 
 
+def _is_generic_meeting_title(value: str) -> bool:
+    # 서비스명/일반 명사만 있는 회의 제목인지 판단
+    normalized = _normalize_text(value)
+    if not normalized:
+        return True
+    if normalized in GENERIC_MEETING_TITLES:
+        return True
+
+    lowered = normalized.lower()
+    if lowered in {title.lower() for title in GENERIC_MEETING_TITLES}:
+        return True
+
+    tokens = set(re.findall(r"[A-Za-z0-9가-힣_]+", lowered))
+    if not tokens:
+        return True
+
+    generic_tokens = {token.lower() for token in GENERIC_MEETING_TITLE_KEYWORDS}
+    return tokens.issubset(generic_tokens)
+
+
+def _build_title_from_items(items: list[str]) -> str:
+    # topics/application_titles에서 회의 제목 후보를 생성
+    normalized_items = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = _normalize_text(item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_items.append(normalized)
+
+    if not normalized_items:
+        return ""
+
+    if len(normalized_items) == 1:
+        base = normalized_items[0]
+    else:
+        base = f"{normalized_items[0]} 및 {normalized_items[1]}"
+
+    suffixes = ("회의", "논의", "점검")
+    if base.endswith(suffixes):
+        return base
+    return f"{base} 회의"
+
+
+def _refine_meeting_title(overall_analysis: MeetingAnalysis) -> None:
+    # LLM이 일반 제목을 반환하면 topics/application_titles 기반으로 보정
+    current_title = overall_analysis.meeting_info.title
+    if not _is_generic_meeting_title(current_title):
+        return
+
+    topic_title = _build_title_from_items(overall_analysis.topics)
+    if topic_title:
+        overall_analysis.meeting_info.title = topic_title
+        return
+
+    application_title = _build_title_from_items(overall_analysis.application_titles)
+    if application_title:
+        overall_analysis.meeting_info.title = application_title
+
+
 def _is_ambiguous_utterance(value: str) -> bool:
     # 화자 추정에 쓰기 어려운 짧은/모호 발화 여부 판단
     normalized = _normalize_text(value).lower()
@@ -433,6 +521,7 @@ def _synchronize_overall_with_applications(result: MeetingAnalysisResult) -> Non
 
     result.overall_analysis.application_titles = titles
     result.overall_analysis.application_reasons = reasons
+    _refine_meeting_title(result.overall_analysis)
 
 
 def build_analysis_result(
@@ -468,6 +557,7 @@ async def extract_overall_analysis(
 
     try:
         result = _SummaryOnlyResponse.model_validate(parsed)
+        _refine_meeting_title(result.overall_analysis)
         return result.overall_analysis
     except Exception as e:
         raise AppServiceError(
