@@ -8,7 +8,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.core.errors import AppServiceError
-from app.domains.decision.schemas import (
+from app.domains.meeting_analysis.schemas import (
     Application,
     MeetingAnalysis,
     MeetingAnalysisResult,

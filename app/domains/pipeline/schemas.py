@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.domains.decision.schemas import MeetingAnalysisResult
+from app.domains.meeting_analysis.schemas import MeetingAnalysisResult
 from app.domains.transcribe.schemas import TranscribeSegment
 
 RunStatus = Literal["queued", "processing", "completed", "failed"]
