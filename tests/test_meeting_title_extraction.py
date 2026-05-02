@@ -1,5 +1,5 @@
-from app.domains.decision.schemas import MeetingAnalysis, MeetingInfo
-from app.domains.decision.services.extraction import (
+from app.domains.meeting_analysis.schemas import MeetingAnalysis, MeetingInfo
+from app.domains.meeting_analysis.services.extraction import (
     _is_generic_meeting_title,
     _refine_meeting_title,
 )
