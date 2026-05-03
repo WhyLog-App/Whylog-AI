@@ -216,6 +216,59 @@ async def summarize_commit(
         ) from e
 
 
+async def store_commit_embedding(
+    commit_id: int,
+    commit_hash: str | None,
+    repository_id: int,
+    message: str,
+    changed_file_list: list[ChangedFile],
+) -> None:
+    """커밋 임베딩용 구조화 텍스트를 생성하고 ChromaDB에 저장한다."""
+    client = _get_client()
+    commit_input = _build_commit_input(message, changed_file_list)
+
+    # 1) LLM으로 구조화 텍스트 생성
+    raw_text = await _call_gemini(client, EMBEDDING_PROMPT, commit_input, timeout=60.0)
+    parsed = _parse_embedding_response(raw_text)
+
+    # 2) 스펙에 맞는 임베딩용 텍스트 조합
+    commit_subject = message.split("\n", 1)[0].strip()
+    title = f"repository-{repository_id} {commit_subject}"
+    text_parts = [f"변경요약: {parsed.summary}"]
+    if parsed.tech_keywords:
+        text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
+    if parsed.directions:
+        text_parts.append(f"변경방향: {','.join(parsed.directions)}")
+    if parsed.module_tags:
+        text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
+    embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
+
+    # 3) 임베딩 벡터 생성
+    embedding = await _generate_embedding(embedding_text)
+
+    # 4) ChromaDB 저장
+    collection = get_commit_collection()
+    doc_id = f"commit_{commit_id}"
+    metadata = {
+        "commit_id": commit_id,
+        "commit_message": commit_subject,
+        "repository_id": repository_id,
+        "direction": ",".join(parsed.directions),
+        "tech_keywords_csv": ",".join(parsed.tech_keywords),
+        "module_tags_csv": ",".join(parsed.module_tags),
+    }
+    if commit_hash:
+        metadata["commit_hash"] = commit_hash
+    await asyncio.to_thread(
+        collection.upsert,
+        ids=[doc_id],
+        documents=[embedding_text],
+        embeddings=[embedding],
+        metadatas=[metadata],
+    )
+    logger.info("커밋 %d 임베딩 저장 완료: %s", commit_id, doc_id)
+
+
 async def generate_embedding_text(
     commit_id: int,
     commit_hash: str | None,
@@ -225,50 +278,12 @@ async def generate_embedding_text(
 ) -> None:
     """백그라운드에서 임베딩용 구조화 텍스트 생성. 응답을 블로킹하지 않음."""
     try:
-        client = _get_client()
-        commit_input = _build_commit_input(message, changed_file_list)
-
-        # 1) LLM으로 구조화 텍스트 생성
-        raw_text = await _call_gemini(
-            client, EMBEDDING_PROMPT, commit_input, timeout=60.0
+        await store_commit_embedding(
+            commit_id=commit_id,
+            commit_hash=commit_hash,
+            repository_id=repository_id,
+            message=message,
+            changed_file_list=changed_file_list,
         )
-        parsed = _parse_embedding_response(raw_text)
-
-        # 2) 스펙에 맞는 임베딩용 텍스트 조합
-        commit_subject = message.split("\n", 1)[0].strip()
-        title = f"repository-{repository_id} {commit_subject}"
-        text_parts = [f"변경요약: {parsed.summary}"]
-        if parsed.tech_keywords:
-            text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
-        if parsed.directions:
-            text_parts.append(f"변경방향: {','.join(parsed.directions)}")
-        if parsed.module_tags:
-            text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
-        embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
-
-        # 3) 임베딩 벡터 생성
-        embedding = await _generate_embedding(embedding_text)
-
-        # 4) ChromaDB 저장
-        collection = get_commit_collection()
-        doc_id = f"commit_{commit_id}"
-        metadata = {
-            "commit_id": commit_id,
-            "commit_message": commit_subject,
-            "repository_id": repository_id,
-            "direction": ",".join(parsed.directions),
-            "tech_keywords_csv": ",".join(parsed.tech_keywords),
-            "module_tags_csv": ",".join(parsed.module_tags),
-        }
-        if commit_hash:
-            metadata["commit_hash"] = commit_hash
-        await asyncio.to_thread(
-            collection.upsert,
-            ids=[doc_id],
-            documents=[embedding_text],
-            embeddings=[embedding],
-            metadatas=[metadata],
-        )
-        logger.info("커밋 %d 임베딩 저장 완료: %s", commit_id, doc_id)
     except Exception:
         logger.exception("커밋 %d 임베딩 텍스트 생성 실패", commit_id)

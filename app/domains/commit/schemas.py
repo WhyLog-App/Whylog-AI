@@ -1,4 +1,16 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+CommitAnalyzeRunStatusValue = Literal["queued", "processing", "completed", "failed"]
+CommitAnalyzeRunPhase = Literal[
+    "queued",
+    "summarizing",
+    "summary_ready",
+    "embedding",
+    "embedding_ready",
+    "failed",
+]
 
 
 class ChangedFile(BaseModel):
@@ -23,6 +35,60 @@ class CommitAnalyzeRequest(BaseModel):
 class CommitAnalyzeResponse(BaseModel):
     commit_id: int = Field(description="커밋 ID")
     summary: str = Field(description="커밋 요약")
+
+
+class CommitAnalyzeRunResult(BaseModel):
+    commit_id: int = Field(description="커밋 ID")
+    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    repository_id: int = Field(description="Spring 레포지토리 ID")
+    summary: str = Field(description="커밋 요약")
+    embedding_ready: bool = Field(description="커밋 임베딩 저장 완료 여부")
+
+
+class CommitAnalyzeRunAccepted(BaseModel):
+    run_id: str = Field(description="비동기 실행 식별자")
+    status: CommitAnalyzeRunStatusValue = Field(
+        description='실행 상태("queued" 고정으로 시작)'
+    )
+    phase: CommitAnalyzeRunPhase = Field(
+        description='실행 단계("queued" 고정으로 시작)'
+    )
+    commit_id: int = Field(description="커밋 ID")
+    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    repository_id: int = Field(description="Spring 레포지토리 ID")
+
+
+class CommitAnalyzeRunStatus(BaseModel):
+    run_id: str = Field(description="비동기 실행 식별자")
+    status: CommitAnalyzeRunStatusValue = Field(
+        description="queued/processing/completed/failed"
+    )
+    phase: CommitAnalyzeRunPhase = Field(
+        description=(
+            "queued/summarizing/summary_ready/embedding/embedding_ready/failed. "
+            "embedding_ready(completed) 이후 /api/commit/match 호출을 권장합니다."
+        )
+    )
+    commit_id: int = Field(description="커밋 ID")
+    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    repository_id: int = Field(description="Spring 레포지토리 ID")
+    submitted_at: str = Field(description="실행 접수 시각(UTC ISO8601)")
+    started_at: str | None = Field(
+        default=None,
+        description="실행 시작 시각(UTC ISO8601)",
+    )
+    finished_at: str | None = Field(
+        default=None,
+        description="실행 종료 시각(UTC ISO8601)",
+    )
+    error: str | None = Field(default=None, description="실패 시 오류 메시지")
+    result: CommitAnalyzeRunResult | None = Field(
+        default=None,
+        description=(
+            "중간/최종 결과. summary_ready부터 summary가 포함되고, "
+            "embedding_ready에서 embedding_ready=true가 됩니다."
+        ),
+    )
 
 
 class MatchScoreBreakdown(BaseModel):
