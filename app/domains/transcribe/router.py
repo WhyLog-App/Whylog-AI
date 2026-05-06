@@ -33,15 +33,52 @@ from app.domains.pipeline.services.analysis_runs import (
     mark_run_phase,
     mark_run_processing,
 )
-from app.domains.transcribe.schemas import TranscribeSegment
+from app.domains.transcribe.schemas import LiveTranscriptMessage, TranscribeSegment
 from app.domains.transcribe.services import deepgram, transcript_correction
 from app.domains.transcribe.services.deepgram import CONTENT_TYPE_MAP
+from app.domains.transcribe.services.live_transcript_merge import (
+    merge_live_transcript,
+    parse_live_messages,
+)
 
 router = APIRouter(prefix="/transcribe", tags=["transcribe"])
 MAX_FILE_SIZE = 100 * 1024 * 1024
 logger = logging.getLogger(__name__)
 AUDIO_FILE_DESCRIPTION = (
     "회의 녹음 파일. 지원 포맷: wav/mp3/m4a/aac/flac/ogg/webm, 최대 100MB."
+)
+LIVE_MESSAGES_GUIDE = (
+    "실시간 발화 로그 연동:\n"
+    "- live_messages는 Spring WebSocket TEXT 발화 로그 JSON 배열 문자열입니다.\n"
+    "- 각 항목은 type, meetingId, fromMemberId, fromName, "
+    "timestamp, text를 포함합니다.\n"
+    "- FastAPI는 Deepgram STT 결과와 live_messages를 "
+    "시간/순서/텍스트 유사도로 매칭합니다.\n"
+    "- 매칭 성공 시 transcript_segments[].speaker는 실제 이름으로 보강되고 "
+    "member_id가 함께 반환됩니다.\n"
+    "- 매칭 신뢰도가 충분하면 transcript_segments[].text도 "
+    "WebSocket text 기준으로 보정합니다.\n"
+    "- 매칭 실패 시 기존 Speaker N/STT text를 유지합니다."
+)
+LIVE_MESSAGES_FIELD_DESCRIPTION = (
+    "WebSocket 실시간 발화 로그 JSON 배열 문자열(선택). "
+    "Spring WebSocket TEXT 메시지를 아래 형식 그대로 배열로 전달합니다.\n\n"
+    "예시:\n"
+    "[\n"
+    "  {\n"
+    '    "type": "TEXT",\n'
+    '    "meetingId": 123,\n'
+    '    "fromMemberId": 1,\n'
+    '    "fromName": "김준용",\n'
+    '    "timestamp": "00:01:48",\n'
+    '    "targetMemberId": 2,\n'
+    '    "text": "안녕하세요",\n'
+    '    "payload": {}\n'
+    "  }\n"
+    "]\n\n"
+    "필수 사용 필드: type, meetingId, fromMemberId, fromName, timestamp, text. "
+    "targetMemberId와 payload는 선택입니다. "
+    'timestamp는 가능하면 "00:01:48"처럼 회의 기준 발화 시작 시간으로 전달하세요.'
 )
 SPRING_ASYNC_GUIDE = (
     "Spring 연동 가이드:\n"
@@ -90,17 +127,24 @@ async def _transcribe_and_correct_from_bytes(
     audio_bytes: bytes,
     content_type: str,
     num_speakers: int | None,
+    live_messages: list[LiveTranscriptMessage] | None = None,
 ) -> list[TranscribeSegment]:
     # 1단계: Deepgram STT + 화자 분리
     segments = await deepgram.transcribe(audio_bytes, content_type, num_speakers)
 
     # 2단계: Gemini LLM으로 화자 오인식·짧은 발화 등 후처리
-    return await transcript_correction.correct_transcript(segments, num_speakers)
+    corrected_segments = await transcript_correction.correct_transcript(
+        segments, num_speakers
+    )
+
+    # 3단계: WebSocket 실시간 발화 로그 기준으로 최종 전사 보강
+    return merge_live_transcript(corrected_segments, live_messages or [])
 
 
 async def _transcribe_and_correct(
     audio: UploadFile,
     num_speakers: int | None,
+    live_messages: list[LiveTranscriptMessage] | None = None,
 ) -> list[TranscribeSegment]:
     # 업로드 파일을 읽어 STT + 후처리 파이프라인을 실행
     content_type = _resolve_content_type(audio)
@@ -109,6 +153,7 @@ async def _transcribe_and_correct(
         audio_bytes=audio_bytes,
         content_type=content_type,
         num_speakers=num_speakers,
+        live_messages=live_messages,
     )
 
 
@@ -119,6 +164,7 @@ async def _run_transcribe_application_run(
     num_speakers: int | None,
     meeting_id: str | None,
     project_id: str | None,
+    live_messages: list[LiveTranscriptMessage] | None = None,
 ) -> None:
     # 비동기 run의 전체 파이프라인을 단계별(phase)로 실행
     try:
@@ -127,6 +173,7 @@ async def _run_transcribe_application_run(
             audio_bytes=audio_bytes,
             content_type=content_type,
             num_speakers=num_speakers,
+            live_messages=live_messages,
         )
         partial_result = TranscribeAnalysisResponse(
             meeting_id=meeting_id,
@@ -178,7 +225,8 @@ async def _run_transcribe_application_run(
         "화자 분리 전사 세그먼트를 반환합니다.\n\n"
         "Spring 가이드: 이 엔드포인트는 전사 결과만 필요할 때 사용합니다. "
         "적용사항까지 필요하면 /api/transcribe/applications(동기) 또는 "
-        "/api/transcribe/applications/runs(비동기)를 사용하세요."
+        "/api/transcribe/applications/runs(비동기)를 사용하세요.\n\n"
+        f"{LIVE_MESSAGES_GUIDE}"
     ),
     responses={
         200: {
@@ -198,6 +246,7 @@ async def _run_transcribe_application_run(
                                 {
                                     "message_id": 1,
                                     "speaker": "Speaker 0",
+                                    "member_id": None,
                                     "start_time": "00:00:00",
                                     "end_time": "00:00:04",
                                     "text": "Swagger 에러 응답 예시가 부족합니다.",
@@ -302,9 +351,18 @@ async def transcribe_audio(
         le=20,
         description="화자 수 힌트(선택). 전달 시 화자 분리 정확도 개선에 도움.",
     ),
+    live_messages: str | None = Form(
+        default=None,
+        description=LIVE_MESSAGES_FIELD_DESCRIPTION,
+    ),
 ) -> ApiResponse[list[TranscribeSegment]]:
     # 전사+후처리 결과만 필요한 경우 사용하는 엔드포인트
-    segments = await _transcribe_and_correct(audio, num_speakers)
+    parsed_live_messages = parse_live_messages(live_messages)
+    segments = await _transcribe_and_correct(
+        audio,
+        num_speakers,
+        live_messages=parsed_live_messages,
+    )
     return ok_response(
         segments,
         code="TRANSCRIBE_200",
@@ -320,7 +378,9 @@ async def transcribe_audio(
         "오디오 업로드 후 STT, 후처리, 회의 분석/적용사항 추출을 한 번에 완료해 "
         "최종 결과를 동기 응답으로 반환합니다.\n\n"
         "Spring 가이드: 긴 회의에서는 타임아웃 위험이 크므로 "
-        "운영 환경에서는 /api/transcribe/applications/runs 비동기 방식을 권장합니다."
+        "운영 환경에서는 /api/transcribe/applications/runs "
+        "비동기 방식을 권장합니다.\n\n"
+        f"{LIVE_MESSAGES_GUIDE}"
     ),
     responses={
         413: {
@@ -371,9 +431,18 @@ async def transcribe_and_extract_applications(
         default=None,
         description="호출 측이 관리하는 프로젝트 ID(선택).",
     ),
+    live_messages: str | None = Form(
+        default=None,
+        description=LIVE_MESSAGES_FIELD_DESCRIPTION,
+    ),
 ) -> ApiResponse[TranscribeAnalysisResponse]:
     # 전사부터 회의 분석/적용사항 추출까지 동기로 한 번에 수행
-    transcript_segments = await _transcribe_and_correct(audio, num_speakers)
+    parsed_live_messages = parse_live_messages(live_messages)
+    transcript_segments = await _transcribe_and_correct(
+        audio,
+        num_speakers,
+        live_messages=parsed_live_messages,
+    )
     analysis_result = await extract_meeting_analysis(transcript_segments)
 
     return ok_response(
@@ -397,6 +466,7 @@ async def transcribe_and_extract_applications(
         "장시간 작업을 백그라운드로 실행합니다. "
         "즉시 run_id를 반환하며, 상태는 "
         "GET /api/transcribe/applications/runs/{run_id}로 조회합니다.\n\n"
+        f"{LIVE_MESSAGES_GUIDE}\n\n"
         f"{SPRING_ASYNC_GUIDE}"
     ),
     responses={
@@ -456,10 +526,15 @@ async def create_transcribe_application_run(
         default=None,
         description="호출 측이 관리하는 프로젝트 ID(선택).",
     ),
+    live_messages: str | None = Form(
+        default=None,
+        description=LIVE_MESSAGES_FIELD_DESCRIPTION,
+    ),
 ) -> ApiResponse[TranscribeAnalysisRunAccepted]:
     # 장시간 처리를 백그라운드 run으로 접수하고 run_id를 반환
     content_type = _resolve_content_type(audio)
     audio_bytes = await _read_audio_bytes(audio)
+    parsed_live_messages = parse_live_messages(live_messages)
     accepted = await create_run(meeting_id=meeting_id, project_id=project_id)
     background_tasks.add_task(
         _run_transcribe_application_run,
@@ -469,6 +544,7 @@ async def create_transcribe_application_run(
         num_speakers,
         meeting_id=meeting_id,
         project_id=project_id,
+        live_messages=parsed_live_messages,
     )
     return ok_response(
         accepted,
@@ -519,6 +595,7 @@ async def create_transcribe_application_run(
                                     {
                                         "message_id": 1,
                                         "speaker": "Speaker 0",
+                                        "member_id": None,
                                         "start_time": "00:00:00",
                                         "end_time": "00:00:04",
                                         "text": (
