@@ -52,6 +52,34 @@ GENERIC_MEETING_TITLES = {
     "Whylog 프로젝트 기능 점검 회의",
     "Whylog meeting",
 }
+REASON_NOUN_ENDING_PATTERNS = (
+    (re.compile(r"(.+?)(?:이|가)\s+저하된다\.?$"), r"\1 저하"),
+    (re.compile(r"(.+?)(?:이|가)\s+증가한다\.?$"), r"\1 증가"),
+    (re.compile(r"(.+?)(?:이|가)\s+감소한다\.?$"), r"\1 감소"),
+    (re.compile(r"(.+?)(?:이|가)\s+개선된다\.?$"), r"\1 개선"),
+    (re.compile(r"(.+?)(?:이|가)\s+확보된다\.?$"), r"\1 확보"),
+    (re.compile(r"(.+?)(?:이|가)\s+필요하다\.?$"), r"\1 필요성"),
+    (re.compile(r"(.+?)할\s+필요가\s+있다\.?$"), r"\1 필요성"),
+    (re.compile(r"(.+?)해야\s+한다\.?$"), r"\1 필요성"),
+    (re.compile(r"(.+?)해야\s+함\.?$"), r"\1 필요성"),
+    (re.compile(r"(.+?)(?:을|를)\s+방지한다\.?$"), r"\1 방지"),
+    (re.compile(r"(.+?)(?:을|를)\s+개선한다\.?$"), r"\1 개선"),
+    (re.compile(r"(.+?)(?:을|를)\s+확보한다\.?$"), r"\1 확보"),
+    (re.compile(r"(.+?)(?:을|를)\s+보장한다\.?$"), r"\1 보장"),
+    (re.compile(r"(.+?)(?:을|를)\s+줄인다\.?$"), r"\1 감소"),
+    (re.compile(r"(.+?)(?:을|를)\s+감소시킨다\.?$"), r"\1 감소"),
+)
+NOUN_ENDING_REASON_RULE = [
+    "[근거 출력 형식 - 반드시 준수]",
+    "1. application_reasons의 모든 항목은 명사형 어미로 끝낸다.",
+    '2. 허용 예: "사용자 경험 저하 방지", "운영 리스크 감소",',
+    '   "응답 속도 개선 필요성", "데이터 정합성 확보"',
+    '3. 금지 예: "사용자 경험이 저하된다", "운영 리스크가 감소한다",',
+    '   "응답 속도 개선이 필요하다", "정합성을 확보해야 한다"',
+    "4. '~다', '~한다', '~됩니다', '~합니다', '~필요하다', '~해야 한다'로",
+    "   끝나는 서술형 문장은 절대 출력하지 않는다.",
+    "5. 전체 문장을 설명하지 말고 짧은 근거 라벨처럼 작성한다.",
+]
 
 APPLICATION_POLICY_PROMPT = "\n".join(
     [
@@ -72,9 +100,10 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         "1. 기술적/비용적/운영적 이유, 리스크 판단,",
         "   성능/확장성/안정성 관련 판단을 포함한다.",
         "2. 감정적 반응, 농담, 단순 동의는 제외한다.",
-        "3. 동일 의미 발언은 병합하고 구어체는 서술형으로 정제한다.",
+        "3. 동일 의미 발언은 병합하고 구어체는 명사형 근거로 정제한다.",
         "4. 반드시 '1 근거 = 1 문장' 원칙을 준수한다.",
         "   (리스트의 각 항목은 한 문장이어야 함)",
+        *NOUN_ENDING_REASON_RULE,
         "",
         "[정책 3: 적용사항 타임라인 정책]",
         "1. 이슈 제기 -> 대안 논의 -> 적용 합의 시점 순으로 구성한다.",
@@ -122,13 +151,15 @@ SUMMARY_ONLY_PROMPT = "\n".join(
         "[핵심 규칙]",
         "1. 실제 회의 내용 기반으로만 작성하고 추측하지 않는다.",
         "2. application_titles에는 실제 합의된 적용사항만 넣는다.",
-        "3. application_reasons는 근거를 문장 단위로 정리한다.",
+        "3. application_reasons는 근거를 문장 단위로 정리하되",
+        "   각 항목은 명사형 어미로 끝낸다.",
         "4. meeting_info.title은 회의 내용의 핵심 논의 대상/이슈/합의를",
         "   12~35자 내외의 구체적인 한국어 제목으로 작성한다.",
         "5. 'Whylog 프로젝트 회의', 'Whylog meeting', '기능 점검 회의',",
         "   '데이터 없음'처럼 서비스명이나 일반 명사만 있는 제목은 금지한다.",
         "6. title에는 가능하면 핵심 기능명, 오류명, 정책명, 연동 대상처럼",
         "   검색 가능한 고유 단어를 포함한다.",
+        *NOUN_ENDING_REASON_RULE,
         "",
         "[출력 JSON 구조]",
         "{",
@@ -158,6 +189,7 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         "[정책 2: 근거]",
         "1. 기술/비용/운영/리스크/성능 관련 근거를 우선한다.",
         "2. 1 근거 = 1 문장 원칙을 지킨다.",
+        *NOUN_ENDING_REASON_RULE,
         "",
         "[정책 3: 타임라인]",
         "1. 이슈제기 -> 대안논의 -> 적용합의 순서를 따른다.",
@@ -300,6 +332,44 @@ def _parse_timestamp_to_seconds(value: str) -> int | None:
 def _normalize_text(value: str) -> str:
     # 공백 정규화로 비교 안정성 확보
     return " ".join((value or "").split())
+
+
+def _normalize_reason_to_noun_ending(value: str) -> str:
+    # 자주 나오는 서술형 근거 종결을 명사형 근거 라벨로 보정
+    normalized = _normalize_text(value).rstrip(".")
+    if not normalized:
+        return ""
+
+    for pattern, replacement in REASON_NOUN_ENDING_PATTERNS:
+        converted = pattern.sub(replacement, normalized).strip()
+        if converted != normalized:
+            return converted.rstrip(".")
+
+    return normalized
+
+
+def _normalize_application_reason_outputs(result: MeetingAnalysisResult) -> None:
+    # applications와 overall의 근거 출력을 명사형 어미 기준으로 정리
+    for application in result.applications:
+        application.application_reasons = [
+            normalized
+            for reason in application.application_reasons
+            if (normalized := _normalize_reason_to_noun_ending(reason))
+        ]
+    result.overall_analysis.application_reasons = [
+        normalized
+        for reason in result.overall_analysis.application_reasons
+        if (normalized := _normalize_reason_to_noun_ending(reason))
+    ]
+
+
+def _normalize_overall_reason_outputs(overall_analysis: MeetingAnalysis) -> None:
+    # summary_ready 단계의 근거도 동일한 명사형 형식으로 정리
+    overall_analysis.application_reasons = [
+        normalized
+        for reason in overall_analysis.application_reasons
+        if (normalized := _normalize_reason_to_noun_ending(reason))
+    ]
 
 
 def _is_generic_meeting_title(value: str) -> bool:
@@ -502,6 +572,7 @@ def _normalize_timeline_speaker_ids(
 
 def _synchronize_overall_with_applications(result: MeetingAnalysisResult) -> None:
     # overall_analysis를 applications 기준으로 재정렬/동기화
+    _normalize_application_reason_outputs(result)
     titles = [
         application.application_title.strip()
         for application in result.applications
@@ -557,6 +628,7 @@ async def extract_overall_analysis(
 
     try:
         result = _SummaryOnlyResponse.model_validate(parsed)
+        _normalize_overall_reason_outputs(result.overall_analysis)
         _refine_meeting_title(result.overall_analysis)
         return result.overall_analysis
     except Exception as e:
@@ -580,6 +652,7 @@ async def extract_applications_only(
             applications=applications_result.applications,
             other_mentions=applications_result.other_mentions,
         )
+        _normalize_application_reason_outputs(result)
         _normalize_timeline_speaker_ids(result, segments)
         return result
     except Exception as e:
