@@ -224,11 +224,11 @@ async def run_commit_analyze_pipeline(run_id: str) -> None:
             result=result,
         )
         await store_commit_embedding(
-            commit_id=request.commit_id,
             commit_hash=request.commit_hash,
             repository_id=request.repository_id,
             message=request.message,
             changed_file_list=filtered_files,
+            commit_id=request.commit_id,
         )
 
         completed_result = result.model_copy(update={"embedding_ready": True})
