@@ -19,11 +19,20 @@ class ChangedFile(BaseModel):
 
 
 class CommitAnalyzeRequest(BaseModel):
-    commit_id: int = Field(ge=0, description="커밋 ID")
-    commit_hash: str | None = Field(
-        default=None,
+    commit_hash: str = Field(
         pattern=r"^[a-fA-F0-9]{7,64}$",
-        description="Git 커밋 해시(Spring commit detail의 hash를 commit_hash로 전달)",
+        description=(
+            "Git 커밋 해시(외부 식별자, ChromaDB 저장 키). "
+            "Spring commit detail의 hash를 그대로 전달합니다."
+        ),
+    )
+    commit_id: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Spring DB PK (선택). 보내면 매칭 응답 "
+            "join 편의용으로 메타에 함께 저장됩니다."
+        ),
     )
     repository_id: int = Field(ge=0, description="Spring 레포지토리 ID")
     message: str = Field(min_length=1, description="커밋 메시지")
@@ -33,13 +42,17 @@ class CommitAnalyzeRequest(BaseModel):
 
 
 class CommitAnalyzeResponse(BaseModel):
-    commit_id: int = Field(description="커밋 ID")
+    commit_hash: str = Field(description="커밋 해시")
+    commit_id: int | None = Field(
+        default=None,
+        description="Spring DB PK (요청에 포함된 경우 echo)",
+    )
     summary: str = Field(description="커밋 요약")
 
 
 class CommitAnalyzeRunResult(BaseModel):
-    commit_id: int = Field(description="커밋 ID")
-    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    commit_hash: str = Field(description="커밋 해시")
+    commit_id: int | None = Field(default=None, description="Spring DB PK")
     repository_id: int = Field(description="Spring 레포지토리 ID")
     summary: str = Field(description="커밋 요약")
     embedding_ready: bool = Field(description="커밋 임베딩 저장 완료 여부")
@@ -53,8 +66,8 @@ class CommitAnalyzeRunAccepted(BaseModel):
     phase: CommitAnalyzeRunPhase = Field(
         description='실행 단계("queued" 고정으로 시작)'
     )
-    commit_id: int = Field(description="커밋 ID")
-    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    commit_hash: str = Field(description="커밋 해시")
+    commit_id: int | None = Field(default=None, description="Spring DB PK")
     repository_id: int = Field(description="Spring 레포지토리 ID")
 
 
@@ -69,8 +82,8 @@ class CommitAnalyzeRunStatus(BaseModel):
             "embedding_ready(completed) 이후 /api/commit/match 호출을 권장합니다."
         )
     )
-    commit_id: int = Field(description="커밋 ID")
-    commit_hash: str | None = Field(default=None, description="커밋 해시")
+    commit_hash: str = Field(description="커밋 해시")
+    commit_id: int | None = Field(default=None, description="Spring DB PK")
     repository_id: int = Field(description="Spring 레포지토리 ID")
     submitted_at: str = Field(description="실행 접수 시각(UTC ISO8601)")
     started_at: str | None = Field(
