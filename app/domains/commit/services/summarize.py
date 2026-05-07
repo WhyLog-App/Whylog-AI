@@ -217,11 +217,11 @@ async def summarize_commit(
 
 
 async def store_commit_embedding(
-    commit_id: int,
-    commit_hash: str | None,
+    commit_hash: str,
     repository_id: int,
     message: str,
     changed_file_list: list[ChangedFile],
+    commit_id: int | None = None,
 ) -> None:
     """커밋 임베딩용 구조화 텍스트를 생성하고 ChromaDB에 저장한다."""
     client = _get_client()
@@ -246,19 +246,19 @@ async def store_commit_embedding(
     # 3) 임베딩 벡터 생성
     embedding = await _generate_embedding(embedding_text)
 
-    # 4) ChromaDB 저장
+    # 4) ChromaDB 저장 (doc_id는 hash 기반, commit_id는 보조 메타로 저장)
     collection = get_commit_collection()
-    doc_id = f"commit_{commit_id}"
-    metadata = {
-        "commit_id": commit_id,
+    doc_id = f"commit_{commit_hash}"
+    metadata: dict[str, str | int] = {
+        "commit_hash": commit_hash,
         "commit_message": commit_subject,
         "repository_id": repository_id,
         "direction": ",".join(parsed.directions),
         "tech_keywords_csv": ",".join(parsed.tech_keywords),
         "module_tags_csv": ",".join(parsed.module_tags),
     }
-    if commit_hash:
-        metadata["commit_hash"] = commit_hash
+    if commit_id is not None:
+        metadata["commit_id"] = commit_id
     await asyncio.to_thread(
         collection.upsert,
         ids=[doc_id],
@@ -266,24 +266,31 @@ async def store_commit_embedding(
         embeddings=[embedding],
         metadatas=[metadata],
     )
-    logger.info("커밋 %d 임베딩 저장 완료: %s", commit_id, doc_id)
+    logger.info(
+        "커밋 임베딩 저장 완료: doc_id=%s commit_id=%s",
+        doc_id,
+        commit_id,
+    )
 
 
 async def generate_embedding_text(
-    commit_id: int,
-    commit_hash: str | None,
+    commit_hash: str,
     repository_id: int,
     message: str,
     changed_file_list: list[ChangedFile],
+    commit_id: int | None = None,
 ) -> None:
     """백그라운드에서 임베딩용 구조화 텍스트 생성. 응답을 블로킹하지 않음."""
     try:
         await store_commit_embedding(
-            commit_id=commit_id,
             commit_hash=commit_hash,
             repository_id=repository_id,
             message=message,
             changed_file_list=changed_file_list,
+            commit_id=commit_id,
         )
     except Exception:
-        logger.exception("커밋 %d 임베딩 텍스트 생성 실패", commit_id)
+        logger.exception(
+            "커밋 임베딩 텍스트 생성 실패: commit_hash=%s",
+            commit_hash,
+        )

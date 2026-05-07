@@ -50,14 +50,15 @@ COMMIT_ANALYZE_ASYNC_GUIDE = (
     description="Spring에서 커밋 메시지와 diff를 받아 "
     "LLM(Gemini)으로 요약한 결과를 반환합니다.\n\n"
     "**Spring 연동 입력:**\n"
-    "- Spring commit detail의 `hash`는 `commit_hash`로 변환해 전달합니다.\n"
+    "- `commit_hash`는 외부 식별자로 필수입니다 (ChromaDB 저장 키).\n"
+    "- `commit_id`는 Spring DB PK로 선택입니다. 보내면 매칭 응답 join 편의를 위해 "
+    "메타에 함께 저장됩니다.\n"
     "- Spring repository 식별자는 `repository_id`로 전달합니다.\n\n"
     "**백그라운드 임베딩 저장:**\n"
     "- 구조화 임베딩 텍스트 생성 → Gemini Embedding API 벡터 변환 → "
     "ChromaDB(commit_embeddings) 저장\n"
-    "- 동일 commit_id 재호출 시 기존 데이터를 덮어씁니다 (upsert)\n"
-    "- commit_hash가 포함되면 매칭 결과 식별용 메타데이터로 함께 저장합니다\n"
-    "- 문서 ID: commit_{commit_id}\n"
+    "- 동일 commit_hash 재호출 시 기존 데이터를 덮어씁니다 (upsert)\n"
+    "- 문서 ID: commit_{commit_hash}\n"
     "- 임베딩 텍스트: title: repository-{repository_id} {subject} | text: "
     "변경요약: | 기술키워드: | 변경방향: | 파일맥락: ",
     responses={
@@ -70,6 +71,7 @@ COMMIT_ANALYZE_ASYNC_GUIDE = (
                         "code": "COMMON_200",
                         "message": "요청이 성공적으로 처리되었습니다.",
                         "result": {
+                            "commit_hash": ("cb2222fb915f9dfbd5b22eded57dadd57f225798"),
                             "commit_id": 4,
                             "summary": (
                                 "Swagger 에러 문서화를 위한 "
@@ -113,14 +115,18 @@ async def analyze_commit(
     summary = await summarize_commit(request.message, filtered_files)
     background_tasks.add_task(
         generate_embedding_text,
-        request.commit_id,
-        request.commit_hash,
-        request.repository_id,
-        request.message,
-        filtered_files,
+        commit_hash=request.commit_hash,
+        repository_id=request.repository_id,
+        message=request.message,
+        changed_file_list=filtered_files,
+        commit_id=request.commit_id,
     )
     return ok_response(
-        CommitAnalyzeResponse(commit_id=request.commit_id, summary=summary)
+        CommitAnalyzeResponse(
+            commit_hash=request.commit_hash,
+            commit_id=request.commit_id,
+            summary=summary,
+        )
     )
 
 
@@ -151,8 +157,8 @@ async def analyze_commit(
                             "run_id": "550e8400e29b41d4a716446655440000",
                             "status": "queued",
                             "phase": "queued",
-                            "commit_id": 4,
                             "commit_hash": ("cb2222fb915f9dfbd5b22eded57dadd57f225798"),
+                            "commit_id": 4,
                             "repository_id": 1,
                         },
                     }
@@ -206,18 +212,18 @@ async def create_commit_analyze_run(
                             "run_id": "550e8400e29b41d4a716446655440000",
                             "status": "completed",
                             "phase": "embedding_ready",
-                            "commit_id": 4,
                             "commit_hash": ("cb2222fb915f9dfbd5b22eded57dadd57f225798"),
+                            "commit_id": 4,
                             "repository_id": 1,
                             "submitted_at": "2026-04-27T09:00:00Z",
                             "started_at": "2026-04-27T09:00:01Z",
                             "finished_at": "2026-04-27T09:00:10Z",
                             "error": None,
                             "result": {
-                                "commit_id": 4,
                                 "commit_hash": (
                                     "cb2222fb915f9dfbd5b22eded57dadd57f225798"
                                 ),
+                                "commit_id": 4,
                                 "repository_id": 1,
                                 "summary": (
                                     "Swagger 에러 문서화를 위한 "
