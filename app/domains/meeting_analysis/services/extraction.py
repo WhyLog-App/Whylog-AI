@@ -108,7 +108,8 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         "[정책 3: 적용사항 타임라인 정책]",
         "1. 이슈 제기 -> 대안 논의 -> 적용 합의 시점 순으로 구성한다.",
         "2. 적용사항과 직접 관련된 흐름만 표시하고 단순 발언은 제외한다.",
-        "3. 반드시 실제 발화(Utterance) 원문과 화자 ID를 포함한다.",
+        "3. 반드시 실제 발화(Utterance) 원문과 member_id를 포함한다.",
+        "   member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. timeline의 content는 간략한 한 문장으로 작성한다.",
         "------------------------------------------------------------",
         "",
@@ -131,7 +132,7 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         "        {",
         '          "timestamp": "...",',
         '          "step": "이슈제기/대안논의/적용합의",',
-        '          "speaker_id": "Speaker 0",',
+        '          "member_id": 1,',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
         "        }",
@@ -193,8 +194,9 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         "",
         "[정책 3: 타임라인]",
         "1. 이슈제기 -> 대안논의 -> 적용합의 순서를 따른다.",
-        "2. 실제 발화 원문과 화자 ID를 포함한다.",
-        "3. content는 간략한 한 문장으로 작성한다.",
+        "2. 실제 발화 원문과 member_id를 포함한다.",
+        "3. member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
+        "4. content는 간략한 한 문장으로 작성한다.",
         "",
         "[출력 JSON 구조]",
         "{",
@@ -206,7 +208,7 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         "        {",
         '          "timestamp": "...",',
         '          "step": "이슈제기/대안논의/적용합의",',
-        '          "speaker_id": "Speaker 0",',
+        '          "member_id": 1,',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
         "        }",
@@ -460,19 +462,18 @@ def _match_score(utterance: str, segment_text: str) -> int:
     return 0
 
 
-def _infer_speaker_id(
+def _infer_timeline_member_id(
     utterance: str,
     timestamp: str,
     segments: list[TranscribeSegment],
-    valid_speakers: set[str],
-) -> str | None:
-    # timestamp + utterance 유사도로 timeline 화자를 추정
+) -> int | None:
+    # timestamp + utterance 유사도로 timeline 발화의 member_id를 추정
     normalized_utterance = _normalize_text(utterance)
     target_seconds = _parse_timestamp_to_seconds(timestamp)
     timestamp_candidates: list[TranscribeSegment] = []
     if target_seconds is not None:
         for segment in segments:
-            if segment.speaker not in valid_speakers:
+            if segment.member_id is None:
                 continue
             start_seconds = _parse_timestamp_to_seconds(segment.start_time)
             end_seconds = _parse_timestamp_to_seconds(segment.end_time)
@@ -482,7 +483,7 @@ def _infer_speaker_id(
                 timestamp_candidates.append(segment)
 
         if len(timestamp_candidates) == 1:
-            return timestamp_candidates[0].speaker
+            return timestamp_candidates[0].member_id
 
         if len(timestamp_candidates) > 1 and not _is_ambiguous_utterance(
             normalized_utterance
@@ -502,7 +503,7 @@ def _infer_speaker_id(
                 reverse=True,
             )
             if scored and scored[0][0] > 0:
-                return scored[0][1].speaker
+                return scored[0][1].member_id
 
     if _is_ambiguous_utterance(normalized_utterance):
         return None
@@ -517,55 +518,55 @@ def _infer_speaker_id(
                 segment,
             )
             for segment in segments
-            if segment.speaker in valid_speakers
+            if segment.member_id is not None
         ),
         key=lambda item: item[0],
         reverse=True,
     )
     if global_scored and global_scored[0][0] >= 3:
-        return global_scored[0][1].speaker
+        return global_scored[0][1].member_id
     return None
 
 
-def _normalize_timeline_speaker_ids(
+def _normalize_timeline_member_ids(
     result: MeetingAnalysisResult,
     segments: list[TranscribeSegment],
 ) -> None:
-    # LLM이 생성한 잘못된 speaker_id를 가능한 범위에서 보정
-    valid_speakers = [segment.speaker for segment in segments if segment.speaker]
-    valid_speaker_set = set(valid_speakers)
+    # LLM이 생성한 member_id를 전사 세그먼트 기준으로 검증/보정
+    valid_member_ids = {
+        segment.member_id for segment in segments if segment.member_id is not None
+    }
     corrected_count = 0
     unresolved_count = 0
 
     for application in result.applications:
         for item in application.timeline:
-            if item.speaker_id in valid_speaker_set:
+            if item.member_id in valid_member_ids:
                 continue
 
             inferred = None
-            if valid_speaker_set:
-                inferred = _infer_speaker_id(
+            if valid_member_ids:
+                inferred = _infer_timeline_member_id(
                     utterance=item.utterance,
                     timestamp=item.timestamp,
                     segments=segments,
-                    valid_speakers=valid_speaker_set,
                 )
-            if inferred:
-                item.speaker_id = inferred
+            if inferred is not None:
+                item.member_id = inferred
                 corrected_count += 1
             else:
-                # 추정이 불가능하면 임의 화자값을 만들지 않고 None으로 둔다.
-                item.speaker_id = None
+                # 추정이 불가능하면 임의 member_id를 만들지 않고 None으로 둔다.
+                item.member_id = None
                 unresolved_count += 1
 
     if corrected_count > 0:
         logger.warning(
-            "Normalized %s invalid timeline speaker_id values.",
+            "Normalized %s invalid timeline member_id values.",
             corrected_count,
         )
     if unresolved_count > 0:
         logger.warning(
-            "Could not infer %s timeline speaker_id values.",
+            "Could not infer %s timeline member_id values.",
             unresolved_count,
         )
 
@@ -641,7 +642,7 @@ async def extract_overall_analysis(
 async def extract_applications_only(
     segments: list[TranscribeSegment],
 ) -> MeetingAnalysisResult:
-    # applications/other_mentions만 추출 후 speaker_id 보정
+    # applications/other_mentions만 추출 후 member_id 보정
     stt_data = [segment.model_dump(mode="json") for segment in segments]
     prompt = _build_applications_prompt(stt_data)
     parsed = await _request_gemini_json(prompt, "Gemini 적용사항 추출")
@@ -653,7 +654,7 @@ async def extract_applications_only(
             other_mentions=applications_result.other_mentions,
         )
         _normalize_application_reason_outputs(result)
-        _normalize_timeline_speaker_ids(result, segments)
+        _normalize_timeline_member_ids(result, segments)
         return result
     except Exception as e:
         raise AppServiceError(
