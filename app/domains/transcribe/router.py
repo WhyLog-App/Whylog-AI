@@ -100,7 +100,7 @@ SPRING_ASYNC_GUIDE = (
 )
 SPRING_APPLICATION_FAQ = (
     "팀 공유 FAQ:\n"
-    "- timeline.speaker_id는 null일 수 있습니다. "
+    "- timeline.member_id는 null일 수 있습니다. "
     "짧은 응답어/모호 발화에서 오탐을 피하기 위한 설계입니다.\n"
     "- summary_ready 단계의 application_titles는 임시값일 수 있으며, "
     "completed에서 최종 동기화됩니다.\n"
@@ -290,7 +290,7 @@ async def _run_transcribe_application_run(
                                             {
                                                 "timestamp": "00:09:40",
                                                 "step": "적용합의",
-                                                "speaker_id": "Speaker 0",
+                                                "member_id": 1,
                                                 "content": (
                                                     "ApiErrorCodeExample 어노테이션을 "
                                                     "추가하기로 합의함"
@@ -644,7 +644,7 @@ async def create_transcribe_application_run(
                                                 {
                                                     "timestamp": "00:03:12",
                                                     "step": "이슈제기",
-                                                    "speaker_id": "Speaker 0",
+                                                    "member_id": 1,
                                                     "content": (
                                                         "Swagger에서 에러 응답 예시가 "
                                                         "부족하다는 문제가 제기됨"
@@ -657,7 +657,7 @@ async def create_transcribe_application_run(
                                                 {
                                                     "timestamp": "00:06:20",
                                                     "step": "대안논의",
-                                                    "speaker_id": "Speaker 1",
+                                                    "member_id": 2,
                                                     "content": (
                                                         "어노테이션 기반 예시 "
                                                         "문서화가 논의됨"
@@ -670,7 +670,7 @@ async def create_transcribe_application_run(
                                                 {
                                                     "timestamp": "00:09:40",
                                                     "step": "적용합의",
-                                                    "speaker_id": "Speaker 0",
+                                                    "member_id": 1,
                                                     "content": (
                                                         "ApiErrorCodeExample "
                                                         "어노테이션을 "
