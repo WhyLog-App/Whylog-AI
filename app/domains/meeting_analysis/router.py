@@ -25,7 +25,7 @@ router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
         "오디오 재업로드 없이 프롬프트 변경 실험, "
         "실패 재시도, 운영 재처리에 사용합니다.\n\n"
         "팀 공유 FAQ:\n"
-        "- timeline.speaker_id가 null일 수 있습니다(오탐 방지 목적).\n"
+        "- timeline.member_id가 null일 수 있습니다(오탐 방지 목적).\n"
         "- summary_ready 단계 값과 completed 단계 값은 일부 필드가 다를 수 있습니다.\n"
         "- 이 API가 생성하는 applications[].application_id는 보통 null입니다. "
         "Spring이 적용사항을 DB에 저장한 뒤 발급한 applicationId를 "
@@ -95,7 +95,7 @@ router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
                                             {
                                                 "timestamp": "00:03:12",
                                                 "step": "이슈제기",
-                                                "speaker_id": "Speaker 0",
+                                                "member_id": 1,
                                                 "content": (
                                                     "Swagger에서 에러 응답 예시가 "
                                                     "부족하다는 문제가 제기됨"
@@ -108,7 +108,7 @@ router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
                                             {
                                                 "timestamp": "00:06:20",
                                                 "step": "대안논의",
-                                                "speaker_id": "Speaker 1",
+                                                "member_id": 2,
                                                 "content": (
                                                     "어노테이션 기반 예시 "
                                                     "문서화가 논의됨"
@@ -121,7 +121,7 @@ router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
                                             {
                                                 "timestamp": "00:09:40",
                                                 "step": "적용합의",
-                                                "speaker_id": "Speaker 0",
+                                                "member_id": 1,
                                                 "content": (
                                                     "ApiErrorCodeExample 어노테이션을 "
                                                     "추가하기로 합의함"
@@ -255,7 +255,7 @@ async def create_application_embeddings(
                                         {
                                             "timestamp": "00:09:40",
                                             "step": "적용합의",
-                                            "speaker_id": "Speaker 0",
+                                            "member_id": 1,
                                             "content": (
                                                 "ApiErrorCodeExample 어노테이션을 "
                                                 "추가하기로 합의함"
