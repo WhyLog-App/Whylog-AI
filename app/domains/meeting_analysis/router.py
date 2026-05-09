@@ -167,7 +167,8 @@ async def extract_meeting_analysis_from_transcript(
                         "transcript_segments": [
                             {
                                 "message_id": 1,
-                                "speaker": "Speaker 0",
+                                "speaker": "김준용",
+                                "member_id": 1,
                                 "start_time": "00:00:00",
                                 "end_time": "00:00:03",
                                 "text": (
