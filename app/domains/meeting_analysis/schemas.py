@@ -32,13 +32,12 @@ class MeetingAnalysis(BaseModel):
 class ApplicationTimelineItem(BaseModel):
     timestamp: str = Field(description="해당 단계 시각(HH:MM:SS)")
     step: str = Field(description="이슈제기/대안논의/적용합의")
-    speaker_id: str | None = Field(
+    member_id: int | None = Field(
         default=None,
         description=(
-            '타임라인 발화 화자 ID(예: "Speaker 0"). '
-            "짧은 응답어(예: 네/확인)처럼 화자 추정 신뢰도가 낮은 경우 "
-            "억지 매핑을 피하기 위해 null로 반환될 수 있습니다. "
-            'UI에서는 "미확인 화자" 등으로 표시를 권장합니다.'
+            "WebSocket 발화 로그와 매칭된 Spring 멤버 ID. "
+            "실시간 발화 로그가 없거나 매칭 신뢰도가 낮은 경우 "
+            "null로 반환될 수 있습니다."
         ),
     )
     content: str = Field(description="타임라인 요약 한 문장")
