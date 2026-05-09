@@ -468,9 +468,9 @@ class TestCommitAnalyzeHashMetadata:
 
         assert response.result.commit_id == 1
         task = background_tasks.tasks[0]
-        assert task.args[0] == 1
-        assert task.args[1] == "b8fd9ad"
-        assert task.args[2] == 1
+        assert task.kwargs["commit_hash"] == "b8fd9ad"
+        assert task.kwargs["repository_id"] == 1
+        assert task.kwargs["commit_id"] == 1
 
     @pytest.mark.asyncio
     async def test_generate_embedding_text_stores_commit_hash_metadata(self):
@@ -502,16 +502,16 @@ class TestCommitAnalyzeHashMetadata:
             ),
         ):
             await generate_embedding_text(
-                1,
-                "b8fd9ad",
-                1,
-                "feat: API 구현",
-                [
+                commit_hash="b8fd9ad",
+                repository_id=1,
+                message="feat: API 구현",
+                changed_file_list=[
                     ChangedFile(
                         file_name="app/domains/api.py",
                         changed_code="+def handler():\n+    return True",
                     )
                 ],
+                commit_id=1,
             )
 
         _, kwargs = collection.upsert.call_args
