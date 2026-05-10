@@ -24,7 +24,7 @@ from app.main import app
 def _build_match_payload() -> dict:
     return {
         "meeting_id": "meeting-123",
-        "repository_id": 1,
+        "repository_ids": [1],
         "top_k": 5,
     }
 
@@ -182,7 +182,7 @@ class TestApplicationCommitMatchingService:
         assert commit_collection.query.call_args.kwargs["where"] == {"repository_id": 1}
 
     @pytest.mark.asyncio
-    async def test_repository_none_queries_without_where_filter(self):
+    async def test_multiple_repository_ids_query_with_in_filter(self):
         application_collection = MagicMock()
         application_collection.get.return_value = {
             "ids": ["meeting-123_application0"],
@@ -200,7 +200,7 @@ class TestApplicationCommitMatchingService:
         }
 
         payload = _build_match_payload()
-        payload["repository_id"] = None
+        payload["repository_ids"] = [1, 2, 3]
 
         with (
             patch(
@@ -217,7 +217,9 @@ class TestApplicationCommitMatchingService:
             )
 
         commit_collection.query.assert_called_once()
-        assert "where" not in commit_collection.query.call_args.kwargs
+        assert commit_collection.query.call_args.kwargs["where"] == {
+            "repository_id": {"$in": [1, 2, 3]}
+        }
 
     @pytest.mark.asyncio
     async def test_opposite_direction_candidate_is_not_matched(self):
@@ -383,7 +385,7 @@ class TestApplicationCommitMatchingEndpoint:
     def test_match_endpoint_success(self):
         mock_result = ApplicationCommitMatchResponse(
             meeting_id="meeting-123",
-            repository_id=1,
+            repository_ids=[1],
             total_applications=1,
             matched_applications=1,
             applications=[
@@ -411,12 +413,23 @@ class TestApplicationCommitMatchingEndpoint:
         assert body["isSuccess"] is True
         assert body["code"] == "COMMIT_MATCH_200"
         assert body["result"]["meeting_id"] == "meeting-123"
-        assert body["result"]["repository_id"] == 1
+        assert body["result"]["repository_ids"] == [1]
         assert body["result"]["applications"][0]["application_id"] == 101
 
     def test_match_endpoint_validation_error(self):
         payload = _build_match_payload()
         payload["top_k"] = 0
+
+        response = self.client.post("/api/commit/match", json=payload)
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["isSuccess"] is False
+        assert body["code"] == "COMMON_422"
+
+    def test_match_endpoint_requires_repository_ids(self):
+        payload = _build_match_payload()
+        payload["repository_ids"] = []
 
         response = self.client.post("/api/commit/match", json=payload)
 
