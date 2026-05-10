@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -117,10 +117,12 @@ class ApplicationCommitMatchRequest(BaseModel):
         description="적용사항 임베딩을 조회할 회의 ID",
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
     )
-    repository_id: int | None = Field(
-        default=None,
-        ge=0,
-        description="레포지토리 ID (선택, 미지정 시 전체 후보 조회)",
+    repository_ids: list[Annotated[int, Field(ge=0)]] = Field(
+        min_length=1,
+        description=(
+            "매칭 후보로 사용할 Spring 레포지토리 ID 목록. "
+            "팀에 등록된 레포 목록을 모두 전달합니다."
+        ),
     )
     top_k: int = Field(
         default=5,
@@ -167,7 +169,9 @@ class ApplicationCommitMatchItem(BaseModel):
 
 class ApplicationCommitMatchResponse(BaseModel):
     meeting_id: str = Field(description="회의 ID")
-    repository_id: int | None = Field(default=None, description="레포지토리 ID 필터")
+    repository_ids: list[int] = Field(
+        description="매칭 후보로 사용한 레포지토리 ID 목록"
+    )
     total_applications: int = Field(description="조회된 적용사항 문서 수")
     matched_applications: int = Field(description="추천 결과가 존재하는 적용사항 수")
     applications: list[ApplicationCommitMatchItem] = Field(
