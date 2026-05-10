@@ -138,6 +138,75 @@ def test_merge_live_transcript_keeps_stt_when_only_ambiguous_short_messages_exis
     assert merged[1].member_id is None
 
 
+def test_merge_live_transcript_maps_single_speaker_to_dominant_live_member():
+    segments = [
+        _segment(1, "Speaker 0", "00:00:00", "헤이 시작 오늘은 무슨 게임을 시작할까요"),
+        _segment(2, "Speaker 0", "00:00:06", "게임하지 말고 잡시다"),
+        _segment(3, "Speaker 0", "00:00:13", "바이바이"),
+    ]
+    live_messages = [
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=9,
+            fromName="김준용",
+            timestamp="00:00:00",
+            text="회의 시작 오늘은 무슨 얘기를 할까요",
+        ),
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=9,
+            fromName="김준용",
+            timestamp="00:00:06",
+            text="게임하지 말고 잡시다",
+        ),
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=9,
+            fromName="김준용",
+            timestamp="00:00:13",
+            text="바이바이",
+        ),
+    ]
+
+    merged = merge_live_transcript(segments, live_messages)
+
+    assert [segment.member_id for segment in merged] == [9, 9, 9]
+    assert {segment.speaker for segment in merged} == {"김준용"}
+
+
+def test_merge_live_transcript_does_not_use_dominant_fallback_for_mixed_members():
+    segments = [
+        _segment(1, "Speaker 0", "00:00:00", "첫 번째 안건입니다"),
+        _segment(2, "Speaker 0", "00:00:06", "두 번째 안건입니다"),
+    ]
+    live_messages = [
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=9,
+            fromName="김준용",
+            timestamp="00:00:00",
+            text="완전히 다른 이야기입니다",
+        ),
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=10,
+            fromName="유상완",
+            timestamp="00:00:06",
+            text="또 다른 내용입니다",
+        ),
+    ]
+
+    merged = merge_live_transcript(segments, live_messages)
+
+    assert [segment.member_id for segment in merged] == [None, None]
+    assert {segment.speaker for segment in merged} == {"Speaker 0"}
+
+
 def test_merge_live_transcript_uses_text_and_order_when_timestamp_is_iso_string():
     segments = [
         _segment(1, "Speaker 0", "00:00:01", "안녀 하세요"),
