@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from string import punctuation
@@ -34,6 +34,7 @@ MIN_CORRECTION_SCORE = 0.72
 MIN_SPEAKER_VOTES = 2
 MIN_SPEAKER_SHARE = 0.6
 MIN_SPEAKER_AVG_SCORE = 0.6
+MIN_DOMINANT_MEMBER_SHARE = 0.75
 TIME_WINDOW_SECONDS = 12.0
 _live_messages_adapter = TypeAdapter(list[LiveTranscriptMessage])
 
@@ -81,10 +82,23 @@ def merge_live_transcript(
     # STT 결과와 WebSocket 발화 로그를 매칭해 최종 전사를 보강
     live_entries = _prepare_live_entries(live_messages)
     if not segments or not live_entries:
+        logger.info(
+            "live transcript merge skipped: "
+            "segments=%s live_messages=%s live_entries=%s",
+            len(segments),
+            len(live_messages),
+            len(live_entries),
+        )
         return segments
 
     matches = _match_segments_to_live_messages(segments, live_entries)
-    speaker_mapping = _resolve_speaker_mapping(segments, matches)
+    speaker_mapping = _resolve_speaker_mapping(segments, live_entries, matches)
+    _log_merge_result(
+        segments=segments,
+        live_entries=live_entries,
+        matches=matches,
+        speaker_mapping=speaker_mapping,
+    )
     return _apply_matches(segments, matches, speaker_mapping)
 
 
@@ -92,16 +106,21 @@ def _prepare_live_entries(
     live_messages: list[LiveTranscriptMessage],
 ) -> list[_LiveEntry]:
     entries: list[_LiveEntry] = []
+    skipped: Counter[str] = Counter()
     for index, message in enumerate(live_messages):
         if message.type.upper() != "TEXT":
+            skipped["non_text_type"] += 1
             continue
         text = (message.text or "").strip()
         if not text:
+            skipped["empty_text"] += 1
             continue
         if message.from_member_id is None or not message.from_name:
+            skipped["missing_member"] += 1
             continue
         normalized_text = _normalize_text(text)
         if not normalized_text:
+            skipped["empty_normalized_text"] += 1
             continue
         entries.append(
             _LiveEntry(
@@ -112,6 +131,13 @@ def _prepare_live_entries(
                 is_ambiguous=_is_ambiguous_text(normalized_text),
             )
         )
+    logger.info(
+        "live transcript messages prepared: raw=%s prepared=%s skipped=%s samples=%s",
+        len(live_messages),
+        len(entries),
+        dict(skipped),
+        [_live_entry_debug_sample(entry) for entry in entries[:5]],
+    )
     return entries
 
 
@@ -152,6 +178,13 @@ def _match_segments_to_live_messages(
             matches[segment_index] = best_match
             used_live_indexes.add(best_match.live.index)
 
+    logger.info(
+        "live transcript segment matching completed: "
+        "segments=%s live_entries=%s matches=%s",
+        len(segments),
+        len(live_entries),
+        len(matches),
+    )
     return matches
 
 
@@ -173,6 +206,7 @@ def _score_match(
 
 def _resolve_speaker_mapping(
     segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
     matches: dict[int, _SegmentMatch],
 ) -> dict[str, tuple[int, str, float]]:
     votes: dict[str, dict[tuple[int, str], list[float]]] = defaultdict(
@@ -220,7 +254,149 @@ def _resolve_speaker_mapping(
             avg_score,
         )
 
+    _apply_single_speaker_dominant_member_fallback(
+        resolved=resolved,
+        segments=segments,
+        live_entries=live_entries,
+        matches=matches,
+    )
     return resolved
+
+
+def _apply_single_speaker_dominant_member_fallback(
+    resolved: dict[str, tuple[int, str, float]],
+    segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
+    matches: dict[int, _SegmentMatch],
+) -> None:
+    # 짧은 회의에서는 텍스트 유사도 투표가 부족할 수 있어
+    # 단일 화자/단일 멤버 흐름을 보강한다.
+    speakers = {segment.speaker for segment in segments if segment.speaker}
+    if len(speakers) != 1:
+        return
+
+    speaker = next(iter(speakers))
+    if speaker in resolved:
+        logger.info(
+            "dominant-member fallback skipped: speaker already resolved speaker=%s",
+            speaker,
+        )
+        return
+    if not live_entries:
+        logger.info("dominant-member fallback skipped: no live entries")
+        return
+    if not any(not live.is_ambiguous for live in live_entries):
+        logger.info("dominant-member fallback skipped: all live entries are ambiguous")
+        return
+
+    member_votes: dict[tuple[int, str], int] = defaultdict(int)
+    for live in live_entries:
+        member_id = live.message.from_member_id
+        member_name = live.message.from_name or ""
+        if member_id is None or not member_name:
+            continue
+        member_votes[(member_id, member_name)] += 1
+    if not member_votes:
+        logger.info("dominant-member fallback skipped: no member votes")
+        return
+
+    best_member, best_count = max(member_votes.items(), key=lambda item: item[1])
+    share = best_count / len(live_entries)
+    if share < MIN_DOMINANT_MEMBER_SHARE:
+        logger.info(
+            "dominant-member fallback skipped: dominant share too low "
+            "best_member_id=%s share=%.2f threshold=%.2f votes=%s",
+            best_member[0],
+            share,
+            MIN_DOMINANT_MEMBER_SHARE,
+            {member_id: count for (member_id, _), count in member_votes.items()},
+        )
+        return
+
+    match_scores = [
+        match.score
+        for segment_index, match in matches.items()
+        if 0 <= segment_index < len(segments)
+        and segments[segment_index].speaker == speaker
+        and match.live.message.from_member_id == best_member[0]
+    ]
+    confidence = sum(match_scores) / len(match_scores) if match_scores else share
+    resolved[speaker] = (best_member[0], best_member[1], confidence)
+    logger.info(
+        "speaker mapped by dominant-member fallback: "
+        "%s -> %s(member_id=%s, confidence=%.2f)",
+        speaker,
+        best_member[1],
+        best_member[0],
+        confidence,
+    )
+
+
+def _log_merge_result(
+    segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
+    matches: dict[int, _SegmentMatch],
+    speaker_mapping: dict[str, tuple[int, str, float]],
+) -> None:
+    null_speakers = sorted(
+        {
+            segment.speaker
+            for segment in segments
+            if segment.speaker and segment.speaker not in speaker_mapping
+        }
+    )
+    logger.info(
+        "live transcript merge result: segments=%s live_entries=%s matches=%s "
+        "mapped_speakers=%s unmapped_speakers=%s match_samples=%s",
+        len(segments),
+        len(live_entries),
+        len(matches),
+        {
+            speaker: {"member_id": member_id, "member_name": member_name}
+            for speaker, (member_id, member_name, _) in speaker_mapping.items()
+        },
+        null_speakers,
+        [_match_debug_sample(segments, match) for match in list(matches.values())[:5]],
+    )
+
+
+def _live_entry_debug_sample(entry: _LiveEntry) -> dict[str, object]:
+    return {
+        "index": entry.index,
+        "meeting_id": entry.message.meeting_id,
+        "member_id": entry.message.from_member_id,
+        "member_name": entry.message.from_name,
+        "timestamp": entry.message.timestamp,
+        "seconds": entry.seconds,
+        "ambiguous": entry.is_ambiguous,
+        "text": _text_preview(entry.message.text),
+    }
+
+
+def _match_debug_sample(
+    segments: list[TranscribeSegment],
+    match: _SegmentMatch,
+) -> dict[str, object]:
+    segment = segments[match.segment_index]
+    return {
+        "segment_index": match.segment_index,
+        "message_id": segment.message_id,
+        "speaker": segment.speaker,
+        "segment_time": segment.start_time,
+        "live_index": match.live.index,
+        "live_member_id": match.live.message.from_member_id,
+        "score": round(match.score, 3),
+        "text_similarity": round(match.text_similarity, 3),
+        "segment_text": _text_preview(segment.text),
+        "live_text": _text_preview(match.live.message.text),
+    }
+
+
+def _text_preview(value: str | None, limit: int = 40) -> str:
+    normalized = " ".join((value or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
 
 
 def _apply_matches(
