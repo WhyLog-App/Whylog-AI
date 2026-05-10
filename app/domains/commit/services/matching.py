@@ -230,7 +230,7 @@ async def _query_commit_candidates(
     query_embedding: list[float],
     *,
     n_results: int,
-    repository_id: int | None,
+    repository_ids: list[int],
 ) -> dict[str, Any]:
     collection = get_commit_collection()
     query_kwargs: dict[str, Any] = {
@@ -238,8 +238,10 @@ async def _query_commit_candidates(
         "n_results": n_results,
         "include": ["documents", "metadatas", "distances"],
     }
-    if repository_id is not None:
-        query_kwargs["where"] = {"repository_id": repository_id}
+    if len(repository_ids) == 1:
+        query_kwargs["where"] = {"repository_id": repository_ids[0]}
+    else:
+        query_kwargs["where"] = {"repository_id": {"$in": repository_ids}}
 
     try:
         return await asyncio.to_thread(
@@ -353,7 +355,7 @@ async def match_applications_with_commits(
     if not application_entries:
         return ApplicationCommitMatchResponse(
             meeting_id=payload.meeting_id,
-            repository_id=payload.repository_id,
+            repository_ids=payload.repository_ids,
             total_applications=0,
             matched_applications=0,
             applications=[],
@@ -363,6 +365,7 @@ async def match_applications_with_commits(
     matched_by_application: dict[int, dict[str, MatchRecord]] = {
         idx: {} for idx in range(len(application_entries))
     }
+    repository_id_set = set(payload.repository_ids)
 
     for application_index, application in enumerate(application_entries):
         if not application.embedding:
@@ -375,7 +378,7 @@ async def match_applications_with_commits(
         query_result = await _query_commit_candidates(
             application.embedding,
             n_results=pool_size,
-            repository_id=payload.repository_id,
+            repository_ids=payload.repository_ids,
         )
 
         ids_nested = query_result.get("ids") or [[]]
@@ -393,10 +396,7 @@ async def match_applications_with_commits(
             commit_repository_id = _first_int(metadata.get("repository_id"))
 
             # Chroma where 필터 이후에도 metadata 불일치에 대비해 한 번 더 검증한다.
-            if (
-                payload.repository_id is not None
-                and commit_repository_id != payload.repository_id
-            ):
+            if commit_repository_id not in repository_id_set:
                 continue
 
             commit_document = docs[idx] if idx < len(docs) and docs[idx] else ""
@@ -458,7 +458,7 @@ async def match_applications_with_commits(
 
     return ApplicationCommitMatchResponse(
         meeting_id=payload.meeting_id,
-        repository_id=payload.repository_id,
+        repository_ids=payload.repository_ids,
         total_applications=len(application_entries),
         matched_applications=matched_applications,
         applications=application_items,

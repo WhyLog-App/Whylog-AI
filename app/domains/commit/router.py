@@ -261,7 +261,10 @@ async def get_commit_analyze_run(
     summary="적용사항-커밋 추천 매칭",
     description=(
         "회의 적용사항(application 단위)에 대해 "
-        "커밋 임베딩 후보를 유사도 기반으로 추천합니다.\n\n"
+        "커밋 임베딩 후보를 유사도 기반으로 추천합니다.\n"
+        "`repository_ids`에는 팀에 등록된 레포 ID 목록을 전달하며, "
+        "해당 목록 밖의 커밋은 후보에서 제외합니다. "
+        "`top_k`는 레포별 개수가 아니라 적용사항별 최대 추천 개수입니다.\n\n"
         "점수 정책(100점):\n"
         "- 의미 유사성 50\n"
         "- 기술 키워드 일치도 30\n"
@@ -282,7 +285,7 @@ async def get_commit_analyze_run(
                         "message": "적용사항-커밋 추천 분석이 완료되었습니다.",
                         "result": {
                             "meeting_id": "meeting-123",
-                            "repository_id": 1,
+                            "repository_ids": [1, 2, 3],
                             "total_applications": 1,
                             "matched_applications": 1,
                             "applications": [
