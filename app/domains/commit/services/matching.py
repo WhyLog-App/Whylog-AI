@@ -361,7 +361,7 @@ async def match_applications_with_commits(
             applications=[],
         )
 
-    pool_size = min(100, max(payload.top_k, payload.top_k * 5))
+    pool_size = min(100, payload.top_k * 5)
     matched_by_application: dict[int, dict[str, MatchRecord]] = {
         idx: {} for idx in range(len(application_entries))
     }

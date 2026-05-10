@@ -222,6 +222,63 @@ class TestApplicationCommitMatchingService:
         }
 
     @pytest.mark.asyncio
+    async def test_filters_candidate_outside_requested_repository_ids(self):
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0"],
+            "documents": [
+                "title: Redis 도입 | text: 적용사항: notification redis 도입"
+            ],
+            "metadatas": [{"application_title": "notification redis 도입"}],
+            "embeddings": [[0.1, 0.2]],
+        }
+
+        commit_collection = MagicMock()
+        commit_collection.query.return_value = {
+            "ids": [["commit_99"]],
+            "documents": [
+                [
+                    (
+                        "변경요약: redis queue 도입 | 기술키워드: redis "
+                        "| 변경방향: add | 파일맥락: notification"
+                    )
+                ]
+            ],
+            "metadatas": [
+                [
+                    {
+                        "commit_ref": "c99",
+                        "commit_hash": "h99",
+                        "repository_id": 99,
+                        "direction_primary": "add",
+                        "direction_multi_csv": "add",
+                        "tech_keywords_csv": "redis",
+                        "module_tags_csv": "notification",
+                        "commit_message": "feat: introduce redis",
+                    }
+                ]
+            ],
+            "distances": [[0.01]],
+        }
+
+        with (
+            patch(
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
+            ),
+            patch(
+                "app.domains.commit.services.matching.get_commit_collection",
+                return_value=commit_collection,
+            ),
+        ):
+            result = await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**_build_match_payload())
+            )
+
+        assert result.matched_applications == 0
+        assert result.applications[0].recommended_commits == []
+
+    @pytest.mark.asyncio
     async def test_opposite_direction_candidate_is_not_matched(self):
         application_collection = MagicMock()
         application_collection.get.return_value = {
@@ -416,6 +473,28 @@ class TestApplicationCommitMatchingEndpoint:
         assert body["result"]["repository_ids"] == [1]
         assert body["result"]["applications"][0]["application_id"] == 101
 
+    def test_match_endpoint_echoes_multiple_repository_ids(self):
+        mock_result = ApplicationCommitMatchResponse(
+            meeting_id="meeting-123",
+            repository_ids=[1, 2, 3],
+            total_applications=0,
+            matched_applications=0,
+            applications=[],
+        )
+        payload = _build_match_payload()
+        payload["repository_ids"] = [1, 2, 3]
+
+        with patch(
+            "app.domains.commit.router.match_applications_with_commits",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            response = self.client.post("/api/commit/match", json=payload)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["result"]["repository_ids"] == [1, 2, 3]
+
     def test_match_endpoint_validation_error(self):
         payload = _build_match_payload()
         payload["top_k"] = 0
@@ -430,6 +509,17 @@ class TestApplicationCommitMatchingEndpoint:
     def test_match_endpoint_requires_repository_ids(self):
         payload = _build_match_payload()
         payload["repository_ids"] = []
+
+        response = self.client.post("/api/commit/match", json=payload)
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["isSuccess"] is False
+        assert body["code"] == "COMMON_422"
+
+    def test_match_endpoint_requires_repository_ids_key(self):
+        payload = _build_match_payload()
+        del payload["repository_ids"]
 
         response = self.client.post("/api/commit/match", json=payload)
 
