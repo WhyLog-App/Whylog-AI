@@ -34,6 +34,7 @@ MIN_CORRECTION_SCORE = 0.72
 MIN_SPEAKER_VOTES = 2
 MIN_SPEAKER_SHARE = 0.6
 MIN_SPEAKER_AVG_SCORE = 0.6
+MIN_DOMINANT_MEMBER_SHARE = 0.75
 TIME_WINDOW_SECONDS = 12.0
 _live_messages_adapter = TypeAdapter(list[LiveTranscriptMessage])
 
@@ -84,7 +85,7 @@ def merge_live_transcript(
         return segments
 
     matches = _match_segments_to_live_messages(segments, live_entries)
-    speaker_mapping = _resolve_speaker_mapping(segments, matches)
+    speaker_mapping = _resolve_speaker_mapping(segments, live_entries, matches)
     return _apply_matches(segments, matches, speaker_mapping)
 
 
@@ -173,6 +174,7 @@ def _score_match(
 
 def _resolve_speaker_mapping(
     segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
     matches: dict[int, _SegmentMatch],
 ) -> dict[str, tuple[int, str, float]]:
     votes: dict[str, dict[tuple[int, str], list[float]]] = defaultdict(
@@ -220,7 +222,67 @@ def _resolve_speaker_mapping(
             avg_score,
         )
 
+    _apply_single_speaker_dominant_member_fallback(
+        resolved=resolved,
+        segments=segments,
+        live_entries=live_entries,
+        matches=matches,
+    )
     return resolved
+
+
+def _apply_single_speaker_dominant_member_fallback(
+    resolved: dict[str, tuple[int, str, float]],
+    segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
+    matches: dict[int, _SegmentMatch],
+) -> None:
+    # 짧은 회의에서는 텍스트 유사도 투표가 부족할 수 있어
+    # 단일 화자/단일 멤버 흐름을 보강한다.
+    speakers = {segment.speaker for segment in segments if segment.speaker}
+    if len(speakers) != 1:
+        return
+
+    speaker = next(iter(speakers))
+    if speaker in resolved:
+        return
+    if not live_entries:
+        return
+    if not any(not live.is_ambiguous for live in live_entries):
+        return
+
+    member_votes: dict[tuple[int, str], int] = defaultdict(int)
+    for live in live_entries:
+        member_id = live.message.from_member_id
+        member_name = live.message.from_name or ""
+        if member_id is None or not member_name:
+            continue
+        member_votes[(member_id, member_name)] += 1
+    if not member_votes:
+        return
+
+    best_member, best_count = max(member_votes.items(), key=lambda item: item[1])
+    share = best_count / len(live_entries)
+    if share < MIN_DOMINANT_MEMBER_SHARE:
+        return
+
+    match_scores = [
+        match.score
+        for segment_index, match in matches.items()
+        if 0 <= segment_index < len(segments)
+        and segments[segment_index].speaker == speaker
+        and match.live.message.from_member_id == best_member[0]
+    ]
+    confidence = sum(match_scores) / len(match_scores) if match_scores else share
+    resolved[speaker] = (best_member[0], best_member[1], confidence)
+    logger.info(
+        "speaker mapped by dominant-member fallback: "
+        "%s -> %s(member_id=%s, confidence=%.2f)",
+        speaker,
+        best_member[1],
+        best_member[0],
+        confidence,
+    )
 
 
 def _apply_matches(
