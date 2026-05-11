@@ -4,6 +4,7 @@ from app.domains.meeting_analysis.schemas import (
     MeetingAnalysisResult,
 )
 from app.domains.meeting_analysis.services.extraction import (
+    CONCRETE_APPLICATION_RULE,
     NOUN_ENDING_REASON_RULE,
     _normalize_application_reason_outputs,
     _normalize_overall_reason_outputs,
@@ -17,6 +18,13 @@ class TestApplicationReasonFormat:
         assert "명사형 어미" in joined_rule
         assert "절대 출력하지 않는다" in joined_rule
         assert "응답 속도 개선 필요성" in joined_rule
+
+    def test_application_prompt_rule_requires_concrete_action(self):
+        joined_rule = "\n".join(CONCRETE_APPLICATION_RULE)
+
+        assert "실제 실행/반영 단위" in joined_rule
+        assert "두루뭉술한 표현은 절대 사용하지 않는다" in joined_rule
+        assert "WebSocket 발화로그 기준으로 STT 화자 보정 적용" in joined_rule
 
     def test_application_reasons_are_normalized_to_noun_endings(self):
         result = MeetingAnalysisResult(
