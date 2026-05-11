@@ -80,6 +80,17 @@ NOUN_ENDING_REASON_RULE = [
     "   끝나는 서술형 문장은 절대 출력하지 않는다.",
     "5. 전체 문장을 설명하지 말고 짧은 근거 라벨처럼 작성한다.",
 ]
+CONCRETE_APPLICATION_RULE = [
+    "[적용사항 구체화 규칙 - 반드시 준수]",
+    "1. application_title은 주제명이 아니라 실제 실행/반영 단위로 작성한다.",
+    '2. 금지 예: "전사 품질 개선", "회의 분석 고도화", "데모 준비"',
+    '3. 허용 예: "WebSocket 발화로그 기준으로 STT 화자 보정 적용",',
+    '   "전시회 데모 시나리오를 5분 이내 흐름으로 재구성"',
+    "4. timeline의 적용합의 content도 구체적인 실행 문장으로 작성한다.",
+    "5. 적용합의 content는 무엇을 어떻게 반영할지 드러나야 한다.",
+    '6. "개선하기로 함", "논의하기로 함", "준비하기로 함"처럼',
+    "   대상/방법이 빠진 두루뭉술한 표현은 절대 사용하지 않는다.",
+]
 
 APPLICATION_POLICY_PROMPT = "\n".join(
     [
@@ -111,6 +122,7 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         "3. 반드시 실제 발화(Utterance) 원문과 member_id를 포함한다.",
         "   member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. timeline의 content는 간략한 한 문장으로 작성한다.",
+        *CONCRETE_APPLICATION_RULE,
         "------------------------------------------------------------",
         "",
         "[출력 JSON 구조]:",
@@ -197,6 +209,7 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         "2. 실제 발화 원문과 member_id를 포함한다.",
         "3. member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. content는 간략한 한 문장으로 작성한다.",
+        *CONCRETE_APPLICATION_RULE,
         "",
         "[출력 JSON 구조]",
         "{",
