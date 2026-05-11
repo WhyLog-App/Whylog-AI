@@ -35,6 +35,7 @@ MIN_SPEAKER_VOTES = 2
 MIN_SPEAKER_SHARE = 0.6
 MIN_SPEAKER_AVG_SCORE = 0.6
 MIN_DOMINANT_MEMBER_SHARE = 0.75
+MIN_TEXT_SIMILARITY_FOR_MATCH = 0.6
 TIME_WINDOW_SECONDS = 12.0
 _live_messages_adapter = TypeAdapter(list[LiveTranscriptMessage])
 
@@ -99,7 +100,12 @@ def merge_live_transcript(
         matches=matches,
         speaker_mapping=speaker_mapping,
     )
-    return _apply_matches(segments, matches, speaker_mapping)
+    return _apply_matches(
+        segments,
+        live_entries,
+        matches,
+        speaker_mapping,
+    )
 
 
 def _prepare_live_entries(
@@ -145,38 +151,55 @@ def _match_segments_to_live_messages(
     segments: list[TranscribeSegment],
     live_entries: list[_LiveEntry],
 ) -> dict[int, _SegmentMatch]:
-    matches: dict[int, _SegmentMatch] = {}
-    used_live_indexes: set[int] = set()
-
+    candidates: list[_SegmentMatch] = []
     for segment_index, segment in enumerate(segments):
         segment_seconds = _parse_time_to_seconds(segment.start_time)
         segment_text = _normalize_text(segment.text)
         if not segment_text:
             continue
 
-        best_match: _SegmentMatch | None = None
         for live in live_entries:
-            if live.index in used_live_indexes:
-                continue
             score, text_similarity = _score_match(
                 segment_index=segment_index,
                 segment_seconds=segment_seconds,
                 segment_text=segment_text,
                 live=live,
             )
+            if (
+                not live.is_ambiguous
+                and text_similarity < MIN_TEXT_SIMILARITY_FOR_MATCH
+            ):
+                continue
             if score < MIN_MATCH_SCORE:
                 continue
-            if best_match is None or score > best_match.score:
-                best_match = _SegmentMatch(
+            candidates.append(
+                _SegmentMatch(
                     segment_index=segment_index,
                     live=live,
                     score=score,
                     text_similarity=text_similarity,
                 )
+            )
 
-        if best_match is not None:
-            matches[segment_index] = best_match
-            used_live_indexes.add(best_match.live.index)
+    matches: dict[int, _SegmentMatch] = {}
+    used_segments: set[int] = set()
+    used_live_indexes: set[int] = set()
+    for candidate in sorted(
+        candidates,
+        key=lambda match: (
+            match.score,
+            match.text_similarity,
+            -abs(match.segment_index - match.live.index),
+        ),
+        reverse=True,
+    ):
+        if candidate.segment_index in used_segments:
+            continue
+        if candidate.live.index in used_live_indexes:
+            continue
+        matches[candidate.segment_index] = candidate
+        used_segments.add(candidate.segment_index)
+        used_live_indexes.add(candidate.live.index)
 
     logger.info(
         "live transcript segment matching completed: "
@@ -401,20 +424,42 @@ def _text_preview(value: str | None, limit: int = 40) -> str:
 
 def _apply_matches(
     segments: list[TranscribeSegment],
+    live_entries: list[_LiveEntry],
     matches: dict[int, _SegmentMatch],
     speaker_mapping: dict[str, tuple[int, str, float]],
 ) -> list[TranscribeSegment]:
-    corrected: list[TranscribeSegment] = []
+    if not matches:
+        live_only_segments = _build_live_only_segments(live_entries)
+        if live_only_segments:
+            logger.info(
+                "live transcript merge using WebSocket-only fallback: "
+                "segments=%s live_entries=%s",
+                len(segments),
+                len(live_entries),
+            )
+            return _renumber_segments(live_only_segments)
+        return segments
+
+    corrected: list[tuple[float, int, TranscribeSegment]] = []
+    used_live_indexes = {match.live.index for match in matches.values()}
     for segment_index, segment in enumerate(segments):
         update: dict[str, object] = {}
 
-        speaker_match = speaker_mapping.get(segment.speaker)
-        if speaker_match:
-            member_id, member_name, _ = speaker_match
-            update["speaker"] = member_name
-            update["member_id"] = member_id
-
         match = matches.get(segment_index)
+        if match:
+            member_id = match.live.message.from_member_id
+            member_name = match.live.message.from_name
+            if member_id is not None and member_name:
+                update["speaker"] = member_name
+                update["member_id"] = member_id
+
+        if "member_id" not in update:
+            speaker_match = speaker_mapping.get(segment.speaker)
+            if speaker_match:
+                member_id, member_name, _ = speaker_match
+                update["speaker"] = member_name
+                update["member_id"] = member_id
+
         if match and match.score >= MIN_CORRECTION_SCORE:
             live_text = (match.live.message.text or "").strip()
             if live_text:
@@ -426,9 +471,156 @@ def _apply_matches(
                         match.score,
                     )
 
-        corrected.append(segment.model_copy(update=update))
+        sort_key = _segment_sort_key(segment, segment_index)
+        corrected.append((sort_key, segment_index, segment.model_copy(update=update)))
 
-    return corrected
+    if matches:
+        for live in live_entries:
+            if live.index in used_live_indexes:
+                continue
+            if live.is_ambiguous:
+                continue
+
+            live_segment = _build_live_only_segment(live, live_entries)
+            if live_segment is None:
+                continue
+            sort_key = _live_sort_key(
+                live=live,
+                segments=segments,
+                matches=matches,
+            )
+            corrected.append((sort_key, len(segments) + live.index, live_segment))
+            logger.info(
+                "live transcript segment added from unmatched WebSocket message: "
+                "live_index=%s member_id=%s",
+                live.index,
+                live.message.from_member_id,
+            )
+
+    sorted_segments = [
+        item[2] for item in sorted(corrected, key=lambda item: (item[0], item[1]))
+    ]
+    return _renumber_segments(sorted_segments)
+
+
+def _build_live_only_segments(
+    live_entries: list[_LiveEntry],
+) -> list[TranscribeSegment]:
+    segments = []
+    for live in live_entries:
+        if live.is_ambiguous:
+            continue
+        live_segment = _build_live_only_segment(live, live_entries)
+        if live_segment is not None:
+            segments.append(live_segment)
+    return segments
+
+
+def _renumber_segments(
+    segments: list[TranscribeSegment],
+) -> list[TranscribeSegment]:
+    return [
+        segment.model_copy(update={"message_id": index})
+        for index, segment in enumerate(segments, start=1)
+    ]
+
+
+def _segment_sort_key(segment: TranscribeSegment, fallback_index: int) -> float:
+    seconds = _parse_time_to_seconds(segment.start_time)
+    if seconds is not None:
+        return seconds
+    return float(fallback_index)
+
+
+def _live_sort_key(
+    *,
+    live: _LiveEntry,
+    segments: list[TranscribeSegment],
+    matches: dict[int, _SegmentMatch],
+) -> float:
+    if live.seconds is not None:
+        return live.seconds
+
+    anchors = sorted(
+        (
+            (
+                match.live.index,
+                _segment_sort_key(segments[segment_index], segment_index),
+            )
+            for segment_index, match in matches.items()
+            if 0 <= segment_index < len(segments)
+        ),
+        key=lambda item: item[0],
+    )
+    if not anchors:
+        return float(live.index)
+
+    previous_anchor = next(
+        (anchor for anchor in reversed(anchors) if anchor[0] < live.index),
+        None,
+    )
+    next_anchor = next((anchor for anchor in anchors if anchor[0] > live.index), None)
+
+    if previous_anchor and next_anchor:
+        previous_index, previous_sort_key = previous_anchor
+        next_index, next_sort_key = next_anchor
+        progress = (live.index - previous_index) / (next_index - previous_index)
+        return previous_sort_key + ((next_sort_key - previous_sort_key) * progress)
+    if previous_anchor:
+        previous_index, previous_sort_key = previous_anchor
+        return previous_sort_key + ((live.index - previous_index) * 0.001)
+    if next_anchor:
+        next_index, next_sort_key = next_anchor
+        return max(0.0, next_sort_key - ((next_index - live.index) * 0.001))
+    return float(live.index)
+
+
+def _build_live_only_segment(
+    live: _LiveEntry,
+    live_entries: list[_LiveEntry],
+) -> TranscribeSegment | None:
+    text = (live.message.text or "").strip()
+    member_id = live.message.from_member_id
+    member_name = live.message.from_name
+    if not text or member_id is None or not member_name:
+        return None
+
+    start_seconds = live.seconds
+    next_seconds = next(
+        (
+            entry.seconds
+            for entry in live_entries
+            if entry.index > live.index
+            and entry.seconds is not None
+            and start_seconds is not None
+            and entry.seconds > start_seconds
+        ),
+        None,
+    )
+    if start_seconds is None:
+        start_time = "00:00:00"
+        end_time = "00:00:00"
+    else:
+        start_time = _format_seconds(start_seconds)
+        end_time = _format_seconds(next_seconds or start_seconds)
+
+    return TranscribeSegment(
+        message_id=live.index + 1,
+        speaker=member_name,
+        member_id=member_id,
+        start_time=start_time,
+        end_time=end_time,
+        text=text,
+        is_final=True,
+    )
+
+
+def _format_seconds(value: float) -> str:
+    total = max(0, int(value))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    seconds = total % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _parse_time_to_seconds(value: str | None) -> float | None:
