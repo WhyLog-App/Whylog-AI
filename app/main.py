@@ -1,4 +1,6 @@
 import logging
+import logging.handlers
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -9,14 +11,32 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.errors import AppServiceError
+from app.core.logging_middleware import RequestLoggingMiddleware
 from app.core.responses import error_response
 
 # .env 파일의 환경변수 로드 (DEEPGRAM_API_KEY 등)
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+_LOG_DIR = Path("logs")
+_LOG_DIR.mkdir(exist_ok=True)
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    _LOG_DIR / "app.log",
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(), _file_handler],
+)
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+app.add_middleware(RequestLoggingMiddleware)
 app.include_router(api_router)
 logger = logging.getLogger(__name__)
 
