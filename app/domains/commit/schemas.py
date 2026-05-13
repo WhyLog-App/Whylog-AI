@@ -142,7 +142,10 @@ class MatchedCommit(BaseModel):
     commit_message: str | None = Field(default=None, description="커밋 메시지")
     repository_id: int | None = Field(default=None, description="Spring 레포지토리 ID")
     confidence: int = Field(description="신뢰도 점수(0~100)")
-    reason: str = Field(description="추천 사유 요약")
+    reason: str = Field(description="추천 사유 요약(사람이 읽기 좋은 문장)")
+    score_detail: str = Field(
+        description="점수 분해 상세(총점·항목별·겹친 키워드/모듈)"
+    )
     score_breakdown: MatchScoreBreakdown = Field(description="점수 구성 상세")
     direction_primary: str | None = Field(default=None, description="대표 변경 방향")
     direction_multi: list[str] = Field(

@@ -380,7 +380,21 @@ def resolve_match_status(total_score: int) -> MatchStatus:
     return "UNAPPLIED"
 
 
-def build_connection_reason(score: ScoreBreakdown) -> str:
+def _format_overlap(tokens: set[str], *, limit: int = 3) -> str:
+    sorted_tokens = sorted(tokens)
+    shown = sorted_tokens[:limit]
+    suffix = (
+        "" if len(sorted_tokens) <= limit else f" 외 {len(sorted_tokens) - limit}개"
+    )
+    return ", ".join(shown) + suffix
+
+
+def build_connection_reason(
+    score: ScoreBreakdown,
+    *,
+    keyword_overlap: set[str] | None = None,
+    module_overlap: set[str] | None = None,
+) -> str:
     if score.total < 50:
         return "신뢰도 임계치 미달로 자동 연결하지 않았습니다."
     if score.is_opposite_direction:
@@ -389,17 +403,28 @@ def build_connection_reason(score: ScoreBreakdown) -> str:
         return "키워드는 유사하지만 변경 목적이 달라 자동 연결을 제한했습니다."
 
     reason_parts: list[str] = []
+
     if score.semantic >= 30:
         reason_parts.append("의미 유사성이 높습니다")
     elif score.semantic > 0:
         reason_parts.append("의미 유사성이 일부 확인됩니다")
 
-    if score.keyword >= 25:
+    if score.keyword >= 25 and keyword_overlap:
+        reason_parts.append(
+            f"{_format_overlap(keyword_overlap)} 키워드가 다수 일치합니다"
+        )
+    elif score.keyword >= 15 and keyword_overlap:
+        reason_parts.append(f"{_format_overlap(keyword_overlap)} 키워드가 일치합니다")
+    elif score.keyword >= 25:
         reason_parts.append("핵심 기술 키워드가 다수 일치합니다")
     elif score.keyword >= 15:
         reason_parts.append("핵심 기술 키워드가 일부 일치합니다")
 
-    if score.context >= 20:
+    if score.context >= 20 and module_overlap:
+        reason_parts.append(f"{_format_overlap(module_overlap)} 모듈이 직접 일치합니다")
+    elif score.context >= 10 and module_overlap:
+        reason_parts.append(f"{_format_overlap(module_overlap)} 모듈이 간접 일치합니다")
+    elif score.context >= 20:
         reason_parts.append("파일/모듈 맥락이 직접 일치합니다")
     elif score.context >= 10:
         reason_parts.append("파일/모듈 맥락이 간접 일치합니다")
