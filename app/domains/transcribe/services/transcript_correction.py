@@ -5,8 +5,8 @@ import os
 from google import genai
 from google.genai import types
 
-from app.core.config import settings
 from app.core.errors import AppServiceError
+from app.core.gemini import generate_content_with_retry
 from app.domains.transcribe.schemas import TranscribeSegment
 
 logger = logging.getLogger(__name__)
@@ -99,13 +99,15 @@ async def correct_transcript(
 
     try:
         # JSON 모드 강제 + temperature 낮춰 일관성 확보
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_llm_model,
+        response = await generate_content_with_retry(
+            client,
             contents=f"{SYSTEM_PROMPT}\n\n{user_message}",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 temperature=0.1,
             ),
+            timeout=90.0,
+            operation_name="Gemini 전사 후처리",
         )
         parsed = json.loads(response.text)
         return _validate_raw_segments(parsed)

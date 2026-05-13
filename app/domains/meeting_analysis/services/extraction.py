@@ -7,8 +7,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
 from app.core.errors import AppServiceError
+from app.core.gemini import generate_content_with_retry
 from app.domains.meeting_analysis.schemas import (
     Application,
     MeetingAnalysis,
@@ -293,13 +293,15 @@ async def _request_gemini_json(
 
     client = genai.Client(api_key=api_key)
     try:
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_llm_model,
+        response = await generate_content_with_retry(
+            client,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 temperature=0.1,
             ),
+            timeout=90.0,
+            operation_name=failure_context,
         )
     except Exception as e:
         raise AppServiceError(
