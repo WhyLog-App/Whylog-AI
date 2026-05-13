@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.meeting_analysis.schemas import (
     Application,
@@ -15,7 +16,6 @@ from app.domains.meeting_analysis.schemas import (
 )
 from app.domains.transcribe.schemas import TranscribeSegment
 
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 logger = logging.getLogger(__name__)
 AMBIGUOUS_SHORT_UTTERANCES = {
     "네",
@@ -294,7 +294,7 @@ async def _request_gemini_json(
     client = genai.Client(api_key=api_key)
     try:
         response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
+            model=settings.gemini_llm_model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

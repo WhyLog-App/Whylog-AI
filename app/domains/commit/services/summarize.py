@@ -11,7 +11,6 @@ from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import ChangedFile
 
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 RETRY_STATUS_CODES = {500, 502, 503, 504}
 RETRY_BACKOFFS = (1.0, 2.0)  # 1차 실패 후 1초, 2차 실패 후 2초 대기
 logger = logging.getLogger(__name__)
@@ -125,7 +124,7 @@ async def _call_gemini(
         try:
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
-                    model=GEMINI_MODEL,
+                    model=settings.gemini_llm_model,
                     contents=f"{prompt}\n\n{user_message}",
                     config=types.GenerateContentConfig(temperature=0.3),
                 ),
