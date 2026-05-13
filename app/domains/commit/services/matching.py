@@ -14,6 +14,7 @@ from app.domains.commit.schemas import (
 )
 from app.domains.meeting_analysis.services.matching_scoring import (
     ScoringInput,
+    build_connection_reason,
     calculate_match_score,
     extract_direction_labels_from_text,
     extract_module_tokens,
@@ -320,7 +321,12 @@ def _build_match_record(
         commit_message=commit_message,
         repository_id=repository_id,
         confidence=score.total,
-        reason=_build_recommendation_reason(
+        reason=build_connection_reason(
+            score,
+            keyword_overlap=application.keywords & commit_keywords,
+            module_overlap=application.modules & commit_modules,
+        ),
+        score_detail=_build_recommendation_reason(
             score=score,
             application_keywords=application.keywords,
             commit_keywords=commit_keywords,
