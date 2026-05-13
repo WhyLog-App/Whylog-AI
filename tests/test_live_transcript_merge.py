@@ -281,6 +281,39 @@ def test_merge_live_transcript_uses_direct_match_member_without_vote_threshold()
     assert [segment.speaker for segment in merged] == ["유상완", "유진", "김준용"]
 
 
+def test_merge_live_transcript_preserves_long_stt_text_when_live_text_is_partial():
+    segments = [
+        _segment(
+            1,
+            "Speaker 0",
+            "00:00:00",
+            (
+                "웹소켓 발화 로그로 화자를 보정하고 전사 결과를 함께 저장하고 "
+                "적용사항 추출 품질을 높이겠습니다"
+            ),
+        ),
+    ]
+    live_messages = [
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=143,
+            fromMemberId=1,
+            fromName="유상완",
+            timestamp="00:00:00",
+            text="웹소켓 발화 로그로 화자를 보정하고 전사 결과를 함께",
+        ),
+    ]
+
+    merged = merge_live_transcript(segments, live_messages)
+
+    assert merged[0].member_id == 1
+    assert merged[0].speaker == "유상완"
+    assert merged[0].text == (
+        "웹소켓 발화 로그로 화자를 보정하고 전사 결과를 함께 저장하고 "
+        "적용사항 추출 품질을 높이겠습니다"
+    )
+
+
 def test_merge_live_transcript_preserves_unmatched_live_messages_as_segments():
     segments = [
         _segment(

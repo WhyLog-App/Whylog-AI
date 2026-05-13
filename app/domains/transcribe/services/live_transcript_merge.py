@@ -37,6 +37,10 @@ MIN_SPEAKER_AVG_SCORE = 0.6
 MIN_DOMINANT_MEMBER_SHARE = 0.75
 MIN_TEXT_SIMILARITY_FOR_MATCH = 0.6
 TIME_WINDOW_SECONDS = 12.0
+PARSEABLE_TIME_WEIGHTS = (0.45, 0.45, 0.10)
+UNRELIABLE_TIME_WEIGHTS = (0.15, 0.55, 0.30)
+MIN_TEXT_SIMILARITY_FOR_CORRECTION = 0.65
+MIN_LIVE_TEXT_LENGTH_RATIO_FOR_CORRECTION = 0.55
 _live_messages_adapter = TypeAdapter(list[LiveTranscriptMessage])
 
 
@@ -220,8 +224,16 @@ def _score_match(
     text_similarity = SequenceMatcher(None, segment_text, live.normalized_text).ratio()
     time_score = _time_score(segment_seconds, live.seconds)
     order_score = _order_score(segment_index, live.index)
+    time_weight, text_weight, order_weight = _score_weights(
+        segment_seconds,
+        live.seconds,
+    )
 
-    score = (time_score * 0.45) + (text_similarity * 0.45) + (order_score * 0.10)
+    score = (
+        (time_score * time_weight)
+        + (text_similarity * text_weight)
+        + (order_score * order_weight)
+    )
     if live.is_ambiguous:
         score *= 0.45
     return score, text_similarity
@@ -462,7 +474,7 @@ def _apply_matches(
 
         if match and match.score >= MIN_CORRECTION_SCORE:
             live_text = (match.live.message.text or "").strip()
-            if live_text:
+            if live_text and _should_use_live_text(segment.text, live_text, match):
                 update["text"] = live_text
                 if live_text != segment.text:
                     logger.info(
@@ -661,6 +673,15 @@ def _time_score(segment_seconds: float | None, live_seconds: float | None) -> fl
     return max(0.0, 1.0 - (diff / TIME_WINDOW_SECONDS))
 
 
+def _score_weights(
+    segment_seconds: float | None,
+    live_seconds: float | None,
+) -> tuple[float, float, float]:
+    if segment_seconds is None or live_seconds is None:
+        return UNRELIABLE_TIME_WEIGHTS
+    return PARSEABLE_TIME_WEIGHTS
+
+
 def _order_score(segment_index: int, live_index: int) -> float:
     diff = abs(segment_index - live_index)
     if diff >= 6:
@@ -672,6 +693,26 @@ def _normalize_text(value: str) -> str:
     cleaned = re.sub(rf"[{re.escape(punctuation)}]", " ", value.lower())
     cleaned = re.sub(r"[^\w가-힣\s]", " ", cleaned)
     return " ".join(cleaned.split())
+
+
+def _should_use_live_text(
+    segment_text: str,
+    live_text: str,
+    match: _SegmentMatch,
+) -> bool:
+    normalized_segment = _normalize_text(segment_text)
+    normalized_live = _normalize_text(live_text)
+    segment_length = len(normalized_segment.replace(" ", ""))
+    live_length = len(normalized_live.replace(" ", ""))
+    if not normalized_live or live_length == 0:
+        return False
+    if segment_length == 0:
+        return True
+
+    length_ratio = live_length / segment_length
+    if length_ratio < MIN_LIVE_TEXT_LENGTH_RATIO_FOR_CORRECTION:
+        return False
+    return match.text_similarity >= MIN_TEXT_SIMILARITY_FOR_CORRECTION
 
 
 def _is_ambiguous_text(value: str) -> bool:
