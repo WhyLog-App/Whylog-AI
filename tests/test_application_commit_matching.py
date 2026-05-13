@@ -172,8 +172,9 @@ class TestApplicationCommitMatchingService:
             "feat: introduce redis queue"
         )
         assert item.recommended_commits[0].confidence >= 70
-        assert "총" in item.recommended_commits[0].reason
-        assert "겹친 키워드" in item.recommended_commits[0].reason
+        assert item.recommended_commits[0].reason.endswith(".")
+        assert "총" in item.recommended_commits[0].score_detail
+        assert "겹친 키워드" in item.recommended_commits[0].score_detail
         assert item.recommended_commits[1].commit_hash == "h2"
         assert item.recommended_commits[0].confidence >= (
             item.recommended_commits[1].confidence
