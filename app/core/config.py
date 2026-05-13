@@ -14,6 +14,11 @@ class AppSettings(BaseModel):
 
     # Gemini
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
+    gemini_llm_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "GEMINI_LLM_MODEL", "gemini-3.1-flash-lite-preview"
+        )
+    )
 
     # ChromaDB
     chroma_persist_dir: str = Field(

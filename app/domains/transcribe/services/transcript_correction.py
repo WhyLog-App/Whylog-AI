@@ -5,11 +5,10 @@ import os
 from google import genai
 from google.genai import types
 
+from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.transcribe.schemas import TranscribeSegment
 
-# 사용할 Gemini 모델
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 logger = logging.getLogger(__name__)
 
 # LLM에게 전달할 후처리 지침
@@ -101,7 +100,7 @@ async def correct_transcript(
     try:
         # JSON 모드 강제 + temperature 낮춰 일관성 확보
         response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
+            model=settings.gemini_llm_model,
             contents=f"{SYSTEM_PROMPT}\n\n{user_message}",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
