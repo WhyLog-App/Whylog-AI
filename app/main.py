@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.errors import AppServiceError
+from app.core.logging_middleware import RequestLoggingMiddleware
 from app.core.responses import error_response
 
 # .env 파일의 환경변수 로드 (DEEPGRAM_API_KEY 등)
@@ -35,6 +36,7 @@ logging.basicConfig(
 )
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+app.add_middleware(RequestLoggingMiddleware)
 app.include_router(api_router)
 logger = logging.getLogger(__name__)
 
