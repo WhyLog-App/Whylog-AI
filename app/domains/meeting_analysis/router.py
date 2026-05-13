@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Body
@@ -13,6 +14,7 @@ from app.domains.meeting_analysis.services.embedding import embed_and_store_appl
 from app.domains.meeting_analysis.services.extraction import extract_meeting_analysis
 
 router = APIRouter(prefix="/meeting-analysis", tags=["meeting-analysis"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -277,6 +279,12 @@ async def create_application_embeddings(
         ),
     ],
 ) -> ApiResponse[ApplicationEmbeddingResponse]:
+    logger.info(
+        "임베딩 요청 수신 meeting_id=%s application_count=%d application_ids=%s",
+        payload.meeting_id,
+        len(payload.analysis_result.applications),
+        [a.application_id for a in payload.analysis_result.applications],
+    )
     documents = await embed_and_store_applications(
         meeting_id=payload.meeting_id,
         project_id=payload.project_id,
