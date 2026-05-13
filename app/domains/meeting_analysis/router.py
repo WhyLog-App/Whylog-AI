@@ -279,12 +279,7 @@ async def create_application_embeddings(
         ),
     ],
 ) -> ApiResponse[ApplicationEmbeddingResponse]:
-    logger.info(
-        "임베딩 요청 수신 meeting_id=%s application_count=%d application_ids=%s",
-        payload.meeting_id,
-        len(payload.analysis_result.applications),
-        [a.application_id for a in payload.analysis_result.applications],
-    )
+    logger.info("임베딩 요청 수신: %s", payload.model_dump_json(indent=2))
     documents = await embed_and_store_applications(
         meeting_id=payload.meeting_id,
         project_id=payload.project_id,
