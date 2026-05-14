@@ -5,9 +5,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 MatchStatus = Literal["APPLIED", "PARTIAL", "UNAPPLIED"]
+CommitType = Literal["feat", "fix", "docs", "refactor", "test", "build", "chore"]
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9._/-]{1,}|[가-힣]{2,}")
 _PATH_LIKE_PATTERN = re.compile(r"[A-Za-z0-9._/-]+")
+_COMMIT_TYPE_PATTERN = re.compile(r"^\s*([a-zA-Z]+)(?:\([^)]+\))?!?:")
+_TYPE_BONUS = 3
 
 _GENERIC_STOPWORDS = {
     "a",
@@ -93,10 +96,17 @@ _ABSTRACT_COMMIT_WORDS = {
     "change",
     "chore",
     "cleanup",
+    "doc",
+    "docs",
+    "feature",
+    "feat",
     "fix",
+    "build",
     "minor",
     "patch",
     "refactor",
+    "test",
+    "tests",
     "update",
     "수정",
     "정리",
@@ -170,12 +180,80 @@ _LABEL_ALIASES = {
     "폐기": "negative",
 }
 
+_COMMIT_TYPE_ALIASES: dict[str, CommitType] = {
+    "feature": "feat",
+    "feat": "feat",
+    "fix": "fix",
+    "bugfix": "fix",
+    "docs": "docs",
+    "doc": "docs",
+    "documentation": "docs",
+    "refactor": "refactor",
+    "test": "test",
+    "tests": "test",
+    "build": "build",
+    "chore": "chore",
+}
+
+_DOCS_APPLICATION_WORDS = {
+    "docs",
+    "documentation",
+    "openapi",
+    "swagger",
+    "문서",
+    "문서화",
+    "명세",
+    "스웨거",
+}
+_FIX_APPLICATION_WORDS = {
+    "bug",
+    "bugfix",
+    "error",
+    "exception",
+    "fix",
+    "issue",
+    "문제",
+    "버그",
+    "에러",
+    "예외",
+    "오류",
+}
+_FIX_ACTION_WORDS = {
+    "fix",
+    "resolve",
+    "고침",
+    "수정",
+    "해결",
+}
+_REFACTOR_APPLICATION_WORDS = {
+    "refactor",
+    "refactoring",
+    "리팩토링",
+}
+_FEATURE_APPLICATION_WORDS = {
+    "add",
+    "create",
+    "enable",
+    "feature",
+    "implement",
+    "introduce",
+    "support",
+    "구현",
+    "도입",
+    "생성",
+    "연동",
+    "적용",
+    "지원",
+    "추가",
+}
+
 
 @dataclass(frozen=True)
 class ScoreBreakdown:
     semantic: int
     keyword: int
     context: int
+    type_bonus: int
     penalty: int
     total: int
     status: MatchStatus
@@ -242,6 +320,52 @@ def normalize_direction_labels(*values: str | None) -> set[str]:
             if label:
                 labels.add(label)
     return labels
+
+
+def extract_commit_type(commit_message: str) -> CommitType | None:
+    match = _COMMIT_TYPE_PATTERN.match(commit_message or "")
+    if not match:
+        return None
+    raw_type = _normalize_token(match.group(1))
+    return _COMMIT_TYPE_ALIASES.get(raw_type)
+
+
+def infer_application_commit_types(application_text: str) -> set[CommitType]:
+    tokens = extract_text_tokens(application_text)
+    expected_types: set[CommitType] = set()
+
+    if tokens & _DOCS_APPLICATION_WORDS:
+        expected_types.update({"docs", "chore"})
+    if tokens & _FIX_APPLICATION_WORDS and (
+        not expected_types or tokens & _FIX_ACTION_WORDS
+    ):
+        expected_types.add("fix")
+    if tokens & _REFACTOR_APPLICATION_WORDS:
+        expected_types.add("refactor")
+    if tokens & _FEATURE_APPLICATION_WORDS:
+        expected_types.add("feat")
+    return expected_types
+
+
+def score_commit_type_match(
+    application_text: str,
+    commit_message: str,
+    commit_text: str = "",
+) -> int:
+    commit_type = extract_commit_type(commit_message)
+    if not commit_type:
+        return 0
+    expected_types = infer_application_commit_types(application_text)
+    commit_tokens = extract_text_tokens(f"{commit_message} {commit_text}")
+    if (
+        commit_type == "chore"
+        and "docs" in expected_types
+        and not commit_tokens & _DOCS_APPLICATION_WORDS
+    ):
+        return 0
+    if commit_type in expected_types:
+        return _TYPE_BONUS
+    return 0
 
 
 def extract_text_tokens(text: str) -> set[str]:
@@ -452,6 +576,7 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
             semantic=semantic,
             keyword=keyword,
             context=context,
+            type_bonus=0,
             penalty=0,
             total=0,
             status="UNAPPLIED",
@@ -460,6 +585,11 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
         )
 
     base_score = semantic + keyword + context
+    type_bonus = score_commit_type_match(
+        payload.application_text,
+        payload.commit_message,
+        payload.commit_text,
+    )
     penalty = 0
     if is_abstract_commit_message(payload.commit_message):
         penalty += 10
@@ -470,11 +600,12 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
     ):
         penalty += 10
 
-    total = max(0, min(100, base_score - penalty))
+    total = max(0, min(100, base_score + type_bonus - penalty))
     return ScoreBreakdown(
         semantic=semantic,
         keyword=keyword,
         context=context,
+        type_bonus=type_bonus,
         penalty=penalty,
         total=total,
         status=resolve_match_status(total),

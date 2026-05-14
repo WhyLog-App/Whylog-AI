@@ -2,10 +2,13 @@ from app.domains.meeting_analysis.services.matching_scoring import (
     ScoringInput,
     build_connection_reason,
     calculate_match_score,
+    extract_commit_type,
     extract_direction_labels_from_text,
     extract_module_tokens,
     extract_tech_keywords,
+    infer_application_commit_types,
     normalize_direction_labels,
+    score_commit_type_match,
     score_context_match,
     score_keyword_match,
 )
@@ -227,3 +230,115 @@ class TestTotalScorePolicy:
 
         assert reason.endswith(".")
         assert len(reason) > 10
+
+
+class TestCommitTypeScorePolicy:
+    def test_extract_commit_type_accepts_scope_and_breaking_marker(self):
+        assert extract_commit_type("feat(auth)!: 로그인 API 추가") == "feat"
+        assert extract_commit_type("docs: Swagger 명세 보강") == "docs"
+        assert extract_commit_type("unknown: 기타 작업") is None
+
+    def test_application_commit_type_inference_allows_docs_and_chore(self):
+        expected_types = infer_application_commit_types(
+            "Swagger 에러 응답 예시 문서화 및 OpenAPI 명세 정리"
+        )
+
+        assert expected_types == {"docs", "chore"}
+
+    def test_type_match_adds_small_positive_bonus(self):
+        bonus = score_commit_type_match(
+            "팀 목록 조회 API 구현",
+            "feat: 본인 소속 팀 목록 조회 api 구현",
+        )
+
+        assert bonus == 3
+
+    def test_type_mismatch_does_not_apply_penalty(self):
+        payload = _make_payload(
+            distance=0.30,  # semantic 35
+            application_text="Swagger 에러 응답 예시 문서화",
+            commit_message="feat: Swagger 에러 응답 예시 지원",
+            application_keywords={"swagger", "에러"},
+            commit_keywords={"swagger", "에러"},
+            application_modules={"swagger"},
+            commit_modules={"swagger"},
+        )
+        score = calculate_match_score(payload)
+
+        assert score.type_bonus == 0
+        assert score.penalty == 0
+        assert score.total == 70
+
+    def test_chore_commit_can_match_documentation_application(self):
+        payload = _make_payload(
+            distance=0.30,  # semantic 35
+            application_text="Swagger 에러 응답 예시 문서화",
+            commit_text="Swagger OpenAPI 에러 응답 예시 문서화",
+            commit_message="chore: @ApiErrorCodeExample 적용",
+            application_keywords={"swagger", "에러"},
+            commit_keywords={"swagger", "에러"},
+            application_modules={"swagger"},
+            commit_modules={"swagger"},
+        )
+        score = calculate_match_score(payload)
+
+        assert score.type_bonus == 3
+        assert score.penalty == 0
+        assert score.total == 73
+
+    def test_unrelated_chore_does_not_match_documentation_type(self):
+        bonus = score_commit_type_match(
+            "Swagger 에러 응답 예시 문서화",
+            "chore: spring boot version update",
+            "Spring Boot 의존성을 업데이트했습니다.",
+        )
+
+        assert bonus == 0
+
+    def test_abstract_commit_penalty_is_not_exempted_by_type_bonus(self):
+        payload = _make_payload(
+            distance=0.30,  # semantic 35
+            application_text="Swagger 응답 예시 문서화",
+            commit_text="Swagger 문서",
+            commit_message="docs: update",
+            application_keywords={"swagger", "문서"},
+            commit_keywords={"swagger", "문서"},
+            application_modules={"swagger"},
+            commit_modules={"swagger"},
+        )
+        score = calculate_match_score(payload)
+
+        assert score.type_bonus == 3
+        assert score.penalty == 10
+        assert score.total == 63
+
+    def test_mixed_documentation_fix_intent_includes_fix_when_action_exists(self):
+        expected_types = infer_application_commit_types("Swagger 문서화 오류 수정")
+
+        assert expected_types == {"docs", "chore", "fix"}
+
+    def test_mixed_documentation_feature_intent_keeps_docs_and_feat(self):
+        expected_types = infer_application_commit_types("API 명세 구현")
+
+        assert expected_types == {"docs", "chore", "feat"}
+
+    def test_mixed_refactor_documentation_intent_keeps_both_types(self):
+        expected_types = infer_application_commit_types("리팩토링 후 Swagger 정리")
+
+        assert expected_types == {"docs", "chore", "refactor"}
+
+    def test_type_bonus_does_not_rescue_goal_mismatch(self):
+        payload = _make_payload(
+            distance=0.90,  # semantic 5
+            application_text="팀 목록 조회 API 구현",
+            commit_message="feat: 팀 목록 조회 API 추가",
+            application_keywords={"team"},
+            commit_keywords={"team"},
+            application_modules={"team"},
+            commit_modules={"auth"},
+        )
+        score = calculate_match_score(payload)
+
+        assert score.is_goal_mismatch is True
+        assert score.type_bonus == 0
+        assert score.total == 0
