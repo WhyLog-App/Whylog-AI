@@ -108,6 +108,7 @@ class MatchScoreBreakdown(BaseModel):
     semantic: int = Field(description="의미 유사성 점수(0~50)")
     keyword: int = Field(description="기술 키워드 일치도 점수(0~30)")
     context: int = Field(description="파일/모듈 맥락 점수(0~20)")
+    type_bonus: int = Field(default=0, description="커밋 타입 일치 보너스")
     penalty: int = Field(description="보정 감점 합계(0~20)")
     total: int = Field(description="최종 신뢰도 점수(0~100)")
 

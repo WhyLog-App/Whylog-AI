@@ -98,6 +98,8 @@ def _build_recommendation_reason(
     ]
     if score.penalty:
         parts.append(f"보정 감점 {score.penalty}점")
+    if score.type_bonus:
+        parts.append(f"커밋 타입 가산 +{score.type_bonus}점")
     parts.append(f"겹친 키워드: {_format_tokens(keyword_overlap)}")
     parts.append(f"겹친 모듈: {_format_tokens(module_overlap)}")
     return ". ".join(parts) + "."
@@ -337,6 +339,7 @@ def _build_match_record(
             semantic=score.semantic,
             keyword=score.keyword,
             context=score.context,
+            type_bonus=score.type_bonus,
             penalty=score.penalty,
             total=score.total,
         ),
