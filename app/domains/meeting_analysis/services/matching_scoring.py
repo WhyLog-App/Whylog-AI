@@ -96,10 +96,17 @@ _ABSTRACT_COMMIT_WORDS = {
     "change",
     "chore",
     "cleanup",
+    "doc",
+    "docs",
+    "feature",
+    "feat",
     "fix",
+    "build",
     "minor",
     "patch",
     "refactor",
+    "test",
+    "tests",
     "update",
     "수정",
     "정리",
@@ -210,6 +217,13 @@ _FIX_APPLICATION_WORDS = {
     "에러",
     "예외",
     "오류",
+}
+_FIX_ACTION_WORDS = {
+    "fix",
+    "resolve",
+    "고침",
+    "수정",
+    "해결",
 }
 _REFACTOR_APPLICATION_WORDS = {
     "refactor",
@@ -322,7 +336,9 @@ def infer_application_commit_types(application_text: str) -> set[CommitType]:
 
     if tokens & _DOCS_APPLICATION_WORDS:
         expected_types.update({"docs", "chore"})
-    if not expected_types and tokens & _FIX_APPLICATION_WORDS:
+    if tokens & _FIX_APPLICATION_WORDS and (
+        not expected_types or tokens & _FIX_ACTION_WORDS
+    ):
         expected_types.add("fix")
     if tokens & _REFACTOR_APPLICATION_WORDS:
         expected_types.add("refactor")
@@ -331,11 +347,22 @@ def infer_application_commit_types(application_text: str) -> set[CommitType]:
     return expected_types
 
 
-def score_commit_type_match(application_text: str, commit_message: str) -> int:
+def score_commit_type_match(
+    application_text: str,
+    commit_message: str,
+    commit_text: str = "",
+) -> int:
     commit_type = extract_commit_type(commit_message)
     if not commit_type:
         return 0
     expected_types = infer_application_commit_types(application_text)
+    commit_tokens = extract_text_tokens(f"{commit_message} {commit_text}")
+    if (
+        commit_type == "chore"
+        and "docs" in expected_types
+        and not commit_tokens & _DOCS_APPLICATION_WORDS
+    ):
+        return 0
     if commit_type in expected_types:
         return _TYPE_BONUS
     return 0
@@ -561,9 +588,10 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
     type_bonus = score_commit_type_match(
         payload.application_text,
         payload.commit_message,
+        payload.commit_text,
     )
     penalty = 0
-    if type_bonus == 0 and is_abstract_commit_message(payload.commit_message):
+    if is_abstract_commit_message(payload.commit_message):
         penalty += 10
     if is_ambiguous_application(
         payload.application_text,

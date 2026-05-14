@@ -273,6 +273,7 @@ class TestCommitTypeScorePolicy:
         payload = _make_payload(
             distance=0.30,  # semantic 35
             application_text="Swagger 에러 응답 예시 문서화",
+            commit_text="Swagger OpenAPI 에러 응답 예시 문서화",
             commit_message="chore: @ApiErrorCodeExample 적용",
             application_keywords={"swagger", "에러"},
             commit_keywords={"swagger", "에러"},
@@ -284,6 +285,47 @@ class TestCommitTypeScorePolicy:
         assert score.type_bonus == 3
         assert score.penalty == 0
         assert score.total == 73
+
+    def test_unrelated_chore_does_not_match_documentation_type(self):
+        bonus = score_commit_type_match(
+            "Swagger 에러 응답 예시 문서화",
+            "chore: spring boot version update",
+            "Spring Boot 의존성을 업데이트했습니다.",
+        )
+
+        assert bonus == 0
+
+    def test_abstract_commit_penalty_is_not_exempted_by_type_bonus(self):
+        payload = _make_payload(
+            distance=0.30,  # semantic 35
+            application_text="Swagger 응답 예시 문서화",
+            commit_text="Swagger 문서",
+            commit_message="docs: update",
+            application_keywords={"swagger", "문서"},
+            commit_keywords={"swagger", "문서"},
+            application_modules={"swagger"},
+            commit_modules={"swagger"},
+        )
+        score = calculate_match_score(payload)
+
+        assert score.type_bonus == 3
+        assert score.penalty == 10
+        assert score.total == 63
+
+    def test_mixed_documentation_fix_intent_includes_fix_when_action_exists(self):
+        expected_types = infer_application_commit_types("Swagger 문서화 오류 수정")
+
+        assert expected_types == {"docs", "chore", "fix"}
+
+    def test_mixed_documentation_feature_intent_keeps_docs_and_feat(self):
+        expected_types = infer_application_commit_types("API 명세 구현")
+
+        assert expected_types == {"docs", "chore", "feat"}
+
+    def test_mixed_refactor_documentation_intent_keeps_both_types(self):
+        expected_types = infer_application_commit_types("리팩토링 후 Swagger 정리")
+
+        assert expected_types == {"docs", "chore", "refactor"}
 
     def test_type_bonus_does_not_rescue_goal_mismatch(self):
         payload = _make_payload(
