@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.core.errors import AppServiceError
 from app.domains.meeting_analysis.schemas import (
     Application,
+    ApplicationTimelineItem,
     EmbeddedDocument,
     MeetingAnalysis,
     MeetingAnalysisResult,
@@ -117,6 +118,172 @@ class TestBuildEmbeddingDocuments:
         assert "근거: 응답 지연을 줄인다." in docs[0].text
         assert "DB 부하를 줄인다." in docs[0].text
         assert "트래픽 급증 시 안정성을 높인다." in docs[0].text
+
+    def test_timeline_context_uses_agreement_and_discussion_content(self):
+        """임베딩 텍스트에는 적용합의와 대안논의 content만 보조 맥락으로 반영한다."""
+        application = Application(
+            application_title="전사 병합 로직 보강",
+            application_reasons=["화자 매핑 누락을 줄인다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:01",
+                    step="이슈제기",
+                    member_id=1,
+                    content="Speaker 0만 표시되는 문제가 제기됨",
+                    utterance="아직도 Speaker 0으로 나오는데요",
+                ),
+                ApplicationTimelineItem(
+                    timestamp="00:00:10",
+                    step="대안논의",
+                    member_id=2,
+                    content="WebSocket 발화 로그와 STT 전사를 순서 기반으로 병합",
+                    utterance="웹소켓 로그랑 STT를 같이 보면 되겠습니다",
+                ),
+                ApplicationTimelineItem(
+                    timestamp="00:00:20",
+                    step="적용합의",
+                    member_id=3,
+                    content="member_id 기준으로 최종 전사 화자 보정",
+                    utterance="member_id로 대치해서 저장합시다",
+                ),
+            ],
+        )
+
+        docs = build_embedding_documents("mtg-timeline", _make_result([application]))
+
+        assert "결론: member_id 기준으로 최종 전사 화자 보정" in docs[0].text
+        assert (
+            "논의: WebSocket 발화 로그와 STT 전사를 순서 기반으로 병합" in docs[0].text
+        )
+        assert "Speaker 0만 표시되는 문제가 제기됨" not in docs[0].text
+        assert "member_id로 대치해서 저장합시다" not in docs[0].text
+
+    def test_timeline_context_falls_back_when_only_issue_step_exists(self):
+        """이슈제기만 있으면 timeline 맥락을 추가하지 않는다."""
+        application = Application(
+            application_title="전사 병합 로직 보강",
+            application_reasons=["화자 매핑 누락을 줄인다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:01",
+                    step="이슈제기",
+                    member_id=1,
+                    content="Speaker 0만 표시되는 문제가 제기됨",
+                    utterance="아직도 Speaker 0으로 나오는데요",
+                )
+            ],
+        )
+
+        docs = build_embedding_documents("mtg-issue-only", _make_result([application]))
+
+        assert "결론:" not in docs[0].text
+        assert "논의:" not in docs[0].text
+        assert "Speaker 0만 표시되는 문제가 제기됨" not in docs[0].text
+
+    def test_timeline_context_is_truncated(self):
+        """timeline 맥락은 과도하게 길어지지 않도록 제한한다."""
+        long_content = "가" * 500
+        application = Application(
+            application_title="긴 타임라인 처리",
+            application_reasons=["임베딩 노이즈를 줄인다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:20",
+                    step="적용합의",
+                    member_id=3,
+                    content=long_content,
+                    utterance="원문",
+                ),
+            ],
+        )
+
+        docs = build_embedding_documents("mtg-long", _make_result([application]))
+
+        assert f"결론: {'가' * 400}" in docs[0].text
+        assert "가" * 401 not in docs[0].text
+
+    def test_timeline_context_uses_remaining_budget_for_discussion(self):
+        """적용합의가 예산을 먼저 쓰고 대안논의는 남은 길이만 반영된다."""
+        agreement_content = "가" * 300
+        discussion_content = "나" * 300
+        application = Application(
+            application_title="타임라인 예산 처리",
+            application_reasons=["임베딩 텍스트 길이를 제한한다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:10",
+                    step="대안논의",
+                    member_id=2,
+                    content=discussion_content,
+                    utterance="논의 원문",
+                ),
+                ApplicationTimelineItem(
+                    timestamp="00:00:20",
+                    step="적용합의",
+                    member_id=3,
+                    content=agreement_content,
+                    utterance="합의 원문",
+                ),
+            ],
+        )
+
+        docs = build_embedding_documents("mtg-budget", _make_result([application]))
+
+        assert f"결론: {agreement_content}" in docs[0].text
+        assert f"논의: {'나' * 100}" in docs[0].text
+        assert "나" * 101 not in docs[0].text
+
+    def test_timeline_context_uses_discussion_without_agreement(self):
+        """적용합의가 없어도 대안논의 content는 논의 맥락으로 반영한다."""
+        application = Application(
+            application_title="대안논의 기반 적용사항",
+            application_reasons=["구체적인 구현 방향을 보강한다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:10",
+                    step="대안논의",
+                    member_id=2,
+                    content="Redis 캐시를 우선 도입하고 만료 정책을 적용",
+                    utterance="Redis를 먼저 넣고 TTL도 정하겠습니다",
+                )
+            ],
+        )
+
+        docs = build_embedding_documents(
+            "mtg-discussion-only",
+            _make_result([application]),
+        )
+
+        assert "결론:" not in docs[0].text
+        assert "논의: Redis 캐시를 우선 도입하고 만료 정책을 적용" in docs[0].text
+
+    def test_timeline_context_skips_blank_content(self):
+        """공백 content는 timeline 맥락에 반영하지 않는다."""
+        application = Application(
+            application_title="공백 타임라인 처리",
+            application_reasons=["빈 맥락을 제외한다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:20",
+                    step="적용합의",
+                    member_id=3,
+                    content="   ",
+                    utterance="공백",
+                ),
+                ApplicationTimelineItem(
+                    timestamp="00:00:30",
+                    step="대안논의",
+                    member_id=2,
+                    content="",
+                    utterance="빈 문자열",
+                ),
+            ],
+        )
+
+        docs = build_embedding_documents("mtg-blank", _make_result([application]))
+
+        assert "결론:" not in docs[0].text
+        assert "논의:" not in docs[0].text
 
 
 def _mock_embedding(n: int, dim: int = 768) -> list[list[float]]:
