@@ -361,6 +361,13 @@ async def match_applications_with_commits(
     payload: ApplicationCommitMatchRequest,
 ) -> ApplicationCommitMatchResponse:
     application_entries = await _load_application_entries(payload.meeting_id)
+    logger.info(
+        "Loaded application embeddings for match: meeting_id=%s count=%d "
+        "application_ids=%s",
+        payload.meeting_id,
+        len(application_entries),
+        [entry.application_id for entry in application_entries],
+    )
     if not application_entries:
         return ApplicationCommitMatchResponse(
             meeting_id=payload.meeting_id,

@@ -201,6 +201,14 @@ async def embed_and_store_applications(
     동일 meeting_id 재처리 시 기존 문서를 삭제 후 새로 추가한다.
     """
     documents = build_embedding_documents(meeting_id, analysis_result)
+    logger.info(
+        "Application embedding request: meeting_id=%s project_id=%s "
+        "document_count=%d application_ids=%s",
+        meeting_id,
+        project_id,
+        len(documents),
+        [doc.application_id for doc in documents],
+    )
     texts = [doc.text for doc in documents]
     embeddings = await _generate_embeddings(texts) if texts else []
     missing_application_id_count = sum(
