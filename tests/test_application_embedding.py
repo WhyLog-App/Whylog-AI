@@ -285,6 +285,30 @@ class TestBuildEmbeddingDocuments:
         assert "결론:" not in docs[0].text
         assert "논의:" not in docs[0].text
 
+    def test_unknown_timeline_step_is_skipped_with_warning(self, caplog):
+        """정의되지 않은 timeline step은 에러 대신 경고 후 제외한다."""
+        application = Application(
+            application_title="타임라인 step 변형 처리",
+            application_reasons=["LLM 변형 응답으로 인한 실패를 막는다."],
+            timeline=[
+                ApplicationTimelineItem(
+                    timestamp="00:00:20",
+                    step="적용 합의",
+                    member_id=3,
+                    content="공백이 들어간 step은 제외",
+                    utterance="합의했습니다",
+                ),
+            ],
+        )
+
+        with caplog.at_level("WARNING"):
+            docs = build_embedding_documents(
+                "mtg-unknown-step", _make_result([application])
+            )
+
+        assert "결론:" not in docs[0].text
+        assert "Unknown timeline step skipped: '적용 합의'" in caplog.text
+
 
 def _mock_embedding(n: int, dim: int = 768) -> list[list[float]]:
     return [[0.1] * dim for _ in range(n)]

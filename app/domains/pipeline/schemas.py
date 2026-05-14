@@ -1,19 +1,8 @@
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
+from app.core.enums import RunStatus, TranscribeRunPhase
 from app.domains.meeting_analysis.schemas import MeetingAnalysisResult
 from app.domains.transcribe.schemas import TranscribeSegment
-
-RunStatus = Literal["queued", "processing", "completed", "failed"]
-RunPhase = Literal[
-    "queued",
-    "transcribing",
-    "transcript_ready",
-    "summary_ready",
-    "applications_ready",
-    "failed",
-]
 
 
 class TranscribeAnalysisResponse(BaseModel):
@@ -37,7 +26,7 @@ class TranscribeAnalysisResponse(BaseModel):
 class TranscribeAnalysisRunAccepted(BaseModel):
     run_id: str = Field(description="비동기 실행 식별자")
     status: RunStatus = Field(description='실행 상태("queued" 고정으로 시작)')
-    phase: RunPhase = Field(description='실행 단계("queued" 고정으로 시작)')
+    phase: TranscribeRunPhase = Field(description='실행 단계("queued" 고정으로 시작)')
     meeting_id: str | None = Field(default=None, description="요청 meeting_id echo")
     project_id: str | None = Field(default=None, description="요청 project_id echo")
 
@@ -45,7 +34,7 @@ class TranscribeAnalysisRunAccepted(BaseModel):
 class TranscribeAnalysisRunStatus(BaseModel):
     run_id: str = Field(description="비동기 실행 식별자")
     status: RunStatus = Field(description="queued/processing/completed/failed")
-    phase: RunPhase = Field(
+    phase: TranscribeRunPhase = Field(
         description=(
             "queued/transcribing/transcript_ready/summary_ready/"
             "applications_ready/failed. "

@@ -5,6 +5,7 @@ from google import genai
 
 from app.core.chroma import get_application_collection
 from app.core.config import settings
+from app.core.enums import TimelineStep
 from app.core.errors import AppServiceError
 from app.domains.meeting_analysis.schemas import (
     Application,
@@ -16,8 +17,9 @@ logger = logging.getLogger(__name__)
 _meeting_locks: dict[str, asyncio.Lock] = {}
 _meeting_locks_guard = asyncio.Lock()
 TIMELINE_CONTEXT_MAX_LENGTH = 400
-TIMELINE_AGREEMENT_STEP = "적용합의"
-TIMELINE_DISCUSSION_STEP = "대안논의"
+TIMELINE_AGREEMENT_STEP = TimelineStep.AGREEMENT.value
+TIMELINE_DISCUSSION_STEP = TimelineStep.DISCUSSION.value
+KNOWN_TIMELINE_STEPS = {step.value for step in TimelineStep}
 
 
 async def _get_meeting_lock(meeting_id: str) -> asyncio.Lock:
@@ -81,6 +83,13 @@ def _build_timeline_context(application: Application) -> tuple[str, str]:
     discussions: list[str] = []
     seen: set[str] = set()
     used_length = 0
+    unknown_steps = {
+        item.step
+        for item in application.timeline
+        if item.step not in KNOWN_TIMELINE_STEPS
+    }
+    for step in sorted(unknown_steps):
+        logger.warning("Unknown timeline step skipped: %r", step)
 
     for target_step, target_values in (
         (TIMELINE_AGREEMENT_STEP, agreements),

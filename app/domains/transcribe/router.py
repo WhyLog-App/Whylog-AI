@@ -11,6 +11,7 @@ from fastapi import (
     UploadFile,
 )
 
+from app.core.enums import TranscribeRunPhase
 from app.core.errors import AppServiceError
 from app.core.responses import ApiErrorResponse, ApiResponse, ok_response
 from app.domains.meeting_analysis.schemas import MeetingAnalysisResult
@@ -183,7 +184,7 @@ async def _run_transcribe_application_run(
         )
         await mark_run_phase(
             run_id=run_id,
-            phase="transcript_ready",
+            phase=TranscribeRunPhase.TRANSCRIPT_READY,
             result=partial_result,
         )
 
@@ -191,7 +192,7 @@ async def _run_transcribe_application_run(
         partial_result.analysis_result.overall_analysis = overall_analysis
         await mark_run_phase(
             run_id=run_id,
-            phase="summary_ready",
+            phase=TranscribeRunPhase.SUMMARY_READY,
             result=partial_result,
         )
 

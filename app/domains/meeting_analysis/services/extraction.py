@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.core.enums import TimelineStep
 from app.core.errors import AppServiceError
 from app.core.gemini import generate_content_with_retry
 from app.domains.meeting_analysis.schemas import (
@@ -143,7 +144,10 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         '      "timeline": [',
         "        {",
         '          "timestamp": "...",',
-        '          "step": "이슈제기/대안논의/적용합의",',
+        (
+            f'          "step": "{TimelineStep.ISSUE.value}/'
+            f'{TimelineStep.DISCUSSION.value}/{TimelineStep.AGREEMENT.value}",'
+        ),
         '          "member_id": 1,',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
@@ -205,7 +209,10 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         *NOUN_ENDING_REASON_RULE,
         "",
         "[정책 3: 타임라인]",
-        "1. 이슈제기 -> 대안논의 -> 적용합의 순서를 따른다.",
+        (
+            f"1. {TimelineStep.ISSUE.value} -> {TimelineStep.DISCUSSION.value} "
+            f"-> {TimelineStep.AGREEMENT.value} 순서를 따른다."
+        ),
         "2. 실제 발화 원문과 member_id를 포함한다.",
         "3. member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. content는 간략한 한 문장으로 작성한다.",
@@ -220,7 +227,10 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         '      "timeline": [',
         "        {",
         '          "timestamp": "...",',
-        '          "step": "이슈제기/대안논의/적용합의",',
+        (
+            f'          "step": "{TimelineStep.ISSUE.value}/'
+            f'{TimelineStep.DISCUSSION.value}/{TimelineStep.AGREEMENT.value}",'
+        ),
         '          "member_id": 1,',
         '          "content": "간략 요약 한 문장",',
         '          "utterance": "실제 발화 원문"',
