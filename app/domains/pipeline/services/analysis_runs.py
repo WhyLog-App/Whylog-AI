@@ -3,9 +3,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from app.core.enums import RunStatus, TranscribeRunPhase
 from app.domains.pipeline.schemas import (
-    RunPhase,
-    RunStatus,
     TranscribeAnalysisResponse,
     TranscribeAnalysisRunAccepted,
     TranscribeAnalysisRunStatus,
@@ -19,7 +18,7 @@ MAX_RUN_RECORDS = 300
 class _RunRecord:
     run_id: str
     status: RunStatus
-    phase: RunPhase
+    phase: TranscribeRunPhase
     meeting_id: str | None
     project_id: str | None
     submitted_at: datetime
@@ -51,7 +50,7 @@ def _cleanup_runs_locked() -> None:
     expired_ids = []
     for run_id, run in _runs.items():
         # 진행 중 실행은 TTL 삭제 대상에서 제외
-        if run.status in {"queued", "processing"}:
+        if run.status in {RunStatus.QUEUED, RunStatus.PROCESSING}:
             continue
         reference_time = run.finished_at or run.submitted_at
         if reference_time < expiry_cutoff:
@@ -67,7 +66,7 @@ def _cleanup_runs_locked() -> None:
         (
             item
             for item in _runs.items()
-            if item[1].status not in {"queued", "processing"}
+            if item[1].status not in {RunStatus.QUEUED, RunStatus.PROCESSING}
         ),
         key=lambda item: item[1].submitted_at,
     )
@@ -101,16 +100,16 @@ async def create_run(
         run_id = uuid4().hex
         _runs[run_id] = _RunRecord(
             run_id=run_id,
-            status="queued",
-            phase="queued",
+            status=RunStatus.QUEUED,
+            phase=TranscribeRunPhase.QUEUED,
             meeting_id=meeting_id,
             project_id=project_id,
             submitted_at=_utc_now(),
         )
         return TranscribeAnalysisRunAccepted(
             run_id=run_id,
-            status="queued",
-            phase="queued",
+            status=RunStatus.QUEUED,
+            phase=TranscribeRunPhase.QUEUED,
             meeting_id=meeting_id,
             project_id=project_id,
         )
@@ -122,15 +121,15 @@ async def mark_run_processing(run_id: str) -> None:
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "processing"
-        run.phase = "transcribing"
+        run.status = RunStatus.PROCESSING
+        run.phase = TranscribeRunPhase.TRANSCRIBING
         run.started_at = _utc_now()
         run.error = None
 
 
 async def mark_run_phase(
     run_id: str,
-    phase: RunPhase,
+    phase: TranscribeRunPhase,
     result: TranscribeAnalysisResponse | None = None,
 ) -> None:
     # 단계별 중간 결과를 저장하며 phase 갱신
@@ -149,8 +148,8 @@ async def mark_run_completed(run_id: str, result: TranscribeAnalysisResponse) ->
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "completed"
-        run.phase = "applications_ready"
+        run.status = RunStatus.COMPLETED
+        run.phase = TranscribeRunPhase.APPLICATIONS_READY
         run.result = result.model_copy(deep=True)
         run.error = None
         run.finished_at = _utc_now()
@@ -162,8 +161,8 @@ async def mark_run_failed(run_id: str, error: str) -> None:
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "failed"
-        run.phase = "failed"
+        run.status = RunStatus.FAILED
+        run.phase = TranscribeRunPhase.FAILED
         run.error = error
         run.finished_at = _utc_now()
 
