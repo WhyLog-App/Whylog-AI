@@ -10,6 +10,7 @@ from google.genai import types
 
 from app.core.chroma import get_commit_collection
 from app.core.config import settings
+from app.core.enums import CommitChangeDirection
 from app.core.errors import AppServiceError
 from app.core.gemini import RETRY_STATUS_CODES, generate_content_with_retry
 from app.domains.commit.schemas import ChangedFile
@@ -56,7 +57,7 @@ SUMMARY_PROMPT = """
 """.strip()
 
 
-VALID_DIRECTIONS = {"add", "remove", "modify", "migrate"}
+VALID_DIRECTIONS = {direction.value for direction in CommitChangeDirection}
 PATH_TOKEN_STOPWORDS = {
     "api",
     "app",
