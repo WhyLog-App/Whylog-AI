@@ -17,8 +17,8 @@ from app.core.responses import error_response
 # .env 파일의 환경변수 로드 (DEEPGRAM_API_KEY 등)
 load_dotenv()
 
-_LOG_DIR = Path("logs")
-_LOG_DIR.mkdir(exist_ok=True)
+_LOG_DIR = Path(settings.log_dir)
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _file_handler = logging.handlers.RotatingFileHandler(
     _LOG_DIR / "app.log",

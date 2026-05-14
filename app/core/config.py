@@ -40,5 +40,8 @@ class AppSettings(BaseModel):
         )
     )
 
+    # Logging
+    log_dir: str = Field(default_factory=lambda: os.getenv("LOG_DIR", "logs"))
+
 
 settings = AppSettings()
