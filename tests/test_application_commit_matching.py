@@ -177,7 +177,9 @@ class TestApplicationCommitMatchingService:
         assert item.recommended_commits[0].confidence >= 70
         assert item.recommended_commits[0].reason.endswith(".")
         assert "총" in item.recommended_commits[0].score_detail
+        assert "커밋 타입 가산 +3점" in item.recommended_commits[0].score_detail
         assert "겹친 키워드" in item.recommended_commits[0].score_detail
+        assert item.recommended_commits[0].score_breakdown.type_bonus == 3
         assert item.recommended_commits[1].commit_hash == "h2"
         assert item.recommended_commits[0].confidence >= (
             item.recommended_commits[1].confidence
