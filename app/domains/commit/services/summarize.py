@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -55,6 +57,64 @@ SUMMARY_PROMPT = """
 
 
 VALID_DIRECTIONS = {"add", "remove", "modify", "migrate"}
+PATH_TOKEN_STOPWORDS = {
+    "api",
+    "app",
+    "abstract",
+    "base",
+    "build",
+    "common",
+    "com",
+    "component",
+    "components",
+    "config",
+    "constant",
+    "constants",
+    "controller",
+    "core",
+    "domain",
+    "domains",
+    "dto",
+    "entity",
+    "factory",
+    "gradle",
+    "helper",
+    "impl",
+    "java",
+    "kotlin",
+    "main",
+    "manager",
+    "mapper",
+    "model",
+    "org",
+    "page",
+    "pages",
+    "provider",
+    "repository",
+    "resources",
+    "service",
+    "settings",
+    "src",
+    "support",
+    "test",
+    "tests",
+    "util",
+    "utils",
+    "vo",
+    "whylog",
+}
+PATH_DIRECTORY_DENYLIST = {
+    ".git",
+    "build",
+    "dist",
+    "generated",
+    "gen",
+    "node_modules",
+    "out",
+    "target",
+}
+PATH_TOKEN_MIN_LENGTH = 2
+MODULE_TAG_MAX_COUNT = 20
 
 
 @dataclass
@@ -113,6 +173,59 @@ def _build_commit_input(message: str, changed_file_list: list[ChangedFile]) -> s
         f"[{f.file_name}]\n{f.changed_code}" for f in changed_file_list
     )
     return f"커밋 메시지: {message}\n\n변경 파일:\n{files_text}"
+
+
+def _split_path_token(value: str) -> set[str]:
+    raw_parts = re.split(r"[^A-Za-z0-9가-힣]+", value)
+    split_parts: set[str] = set()
+    for part in raw_parts:
+        if not part:
+            continue
+        split_parts.update(
+            re.findall(
+                r"[A-Z]+(?=[A-Z][a-z]|\d|\b)|[A-Z]?[a-z]+|\d+|[가-힣]+",
+                part,
+            )
+            or [part]
+        )
+    return {part.lower() for part in split_parts if part}
+
+
+def _extract_path_module_tokens(changed_file_list: list[ChangedFile]) -> list[str]:
+    tokens: set[str] = set()
+    for changed_file in sorted(changed_file_list, key=lambda f: f.file_name):
+        path = PurePosixPath(changed_file.file_name)
+        path_parts = [part.lower() for part in path.parts]
+        if any(part in PATH_DIRECTORY_DENYLIST for part in path_parts):
+            continue
+        for part in path.parts:
+            if part in {"/", ".", ".."}:
+                continue
+            stem = PurePosixPath(part).stem
+            for token in _split_path_token(stem):
+                if len(token) < PATH_TOKEN_MIN_LENGTH:
+                    continue
+                if token in PATH_TOKEN_STOPWORDS:
+                    continue
+                tokens.add(token)
+    return sorted(tokens)
+
+
+def _merge_unique_tokens(
+    *token_groups: list[str], limit: int = MODULE_TAG_MAX_COUNT
+) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in token_groups:
+        for token in group:
+            normalized = token.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 async def _call_gemini(
@@ -209,6 +322,8 @@ async def store_commit_embedding(
     # 1) LLM으로 구조화 텍스트 생성
     raw_text = await _call_gemini(client, EMBEDDING_PROMPT, commit_input, timeout=60.0)
     parsed = _parse_embedding_response(raw_text)
+    path_module_tokens = _extract_path_module_tokens(changed_file_list)
+    module_tags = _merge_unique_tokens(parsed.module_tags, path_module_tokens)
 
     # 2) 스펙에 맞는 임베딩용 텍스트 조합
     commit_subject = message.split("\n", 1)[0].strip()
@@ -218,8 +333,8 @@ async def store_commit_embedding(
         text_parts.append(f"기술키워드: {','.join(parsed.tech_keywords)}")
     if parsed.directions:
         text_parts.append(f"변경방향: {','.join(parsed.directions)}")
-    if parsed.module_tags:
-        text_parts.append(f"파일맥락: {','.join(parsed.module_tags)}")
+    if module_tags:
+        text_parts.append(f"파일맥락: {','.join(module_tags)}")
     embedding_text = f"title: {title} | text: {' | '.join(text_parts)}"
 
     # 3) 임베딩 벡터 생성
@@ -234,7 +349,7 @@ async def store_commit_embedding(
         "repository_id": repository_id,
         "direction": ",".join(parsed.directions),
         "tech_keywords_csv": ",".join(parsed.tech_keywords),
-        "module_tags_csv": ",".join(parsed.module_tags),
+        "module_tags_csv": ",".join(module_tags),
     }
     if commit_id is not None:
         metadata["commit_id"] = commit_id
