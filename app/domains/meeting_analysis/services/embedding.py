@@ -7,6 +7,7 @@ from app.core.chroma import get_application_collection
 from app.core.config import settings
 from app.core.errors import AppServiceError
 from app.domains.meeting_analysis.schemas import (
+    Application,
     EmbeddedDocument,
     MeetingAnalysisResult,
 )
@@ -14,6 +15,9 @@ from app.domains.meeting_analysis.schemas import (
 logger = logging.getLogger(__name__)
 _meeting_locks: dict[str, asyncio.Lock] = {}
 _meeting_locks_guard = asyncio.Lock()
+TIMELINE_CONTEXT_MAX_LENGTH = 400
+TIMELINE_AGREEMENT_STEP = "적용합의"
+TIMELINE_DISCUSSION_STEP = "대안논의"
 
 
 async def _get_meeting_lock(meeting_id: str) -> asyncio.Lock:
@@ -55,6 +59,54 @@ def _build_reason_text(application_reasons: list[str]) -> tuple[str, int]:
     return " | ".join(normalized_reasons), total_count
 
 
+def _append_with_budget(
+    values: list[str],
+    item: str,
+    used_length: int,
+    max_length: int,
+) -> int:
+    if used_length >= max_length:
+        return used_length
+    remaining = max_length - used_length
+    trimmed = item[:remaining]
+    if not trimmed:
+        return used_length
+    values.append(trimmed)
+    return used_length + len(trimmed)
+
+
+def _build_timeline_context(application: Application) -> tuple[str, str]:
+    """적용사항 timeline에서 임베딩에 쓸 결론/논의 맥락을 추출한다."""
+    agreements: list[str] = []
+    discussions: list[str] = []
+    seen: set[str] = set()
+    used_length = 0
+
+    for target_step, target_values in (
+        (TIMELINE_AGREEMENT_STEP, agreements),
+        (TIMELINE_DISCUSSION_STEP, discussions),
+    ):
+        for item in application.timeline:
+            if item.step != target_step:
+                continue
+            content = _normalize_text(item.content)
+            if not content or content in seen:
+                continue
+            seen.add(content)
+            used_length = _append_with_budget(
+                target_values,
+                content,
+                used_length,
+                TIMELINE_CONTEXT_MAX_LENGTH,
+            )
+            if used_length >= TIMELINE_CONTEXT_MAX_LENGTH:
+                break
+        if used_length >= TIMELINE_CONTEXT_MAX_LENGTH:
+            break
+
+    return " | ".join(agreements), " | ".join(discussions)
+
+
 def build_embedding_documents(
     meeting_id: str,
     analysis_result: MeetingAnalysisResult,
@@ -62,7 +114,8 @@ def build_embedding_documents(
     """회의 분석 결과에서 application 단위 임베딩 문서를 생성한다.
 
     문서 ID: {meeting_id}_application{i}
-    텍스트: "title: {title} | text: 적용사항: {title} | 근거: {근거들}"
+    텍스트: "title: {title} | text: 적용사항: {title} | 근거: {근거들}
+    | 결론: {적용합의 content} | 논의: {대안논의 content}"
     """
     documents: list[EmbeddedDocument] = []
     total_reasons = 0
@@ -71,11 +124,16 @@ def build_embedding_documents(
     for application_idx, application in enumerate(analysis_result.applications):
         title = _normalize_text(application.application_title)
         reason_text, reason_total = _build_reason_text(application.application_reasons)
+        agreement_text, discussion_text = _build_timeline_context(application)
         total_reasons += reason_total
         doc_id = f"{meeting_id}_application{application_idx}"
         text = f"title: {title or 'none'} | text: 적용사항: {title or 'none'}"
         if reason_text:
             text += f" | 근거: {reason_text}"
+        if agreement_text:
+            text += f" | 결론: {agreement_text}"
+        if discussion_text:
+            text += f" | 논의: {discussion_text}"
         documents.append(
             EmbeddedDocument(
                 document_id=doc_id,
