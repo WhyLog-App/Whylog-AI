@@ -1,16 +1,8 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-CommitAnalyzeRunStatusValue = Literal["queued", "processing", "completed", "failed"]
-CommitAnalyzeRunPhase = Literal[
-    "queued",
-    "summarizing",
-    "summary_ready",
-    "embedding",
-    "embedding_ready",
-    "failed",
-]
+from app.core.enums import CommitAnalyzeRunPhase, RunStatus
 
 
 class ChangedFile(BaseModel):
@@ -60,9 +52,7 @@ class CommitAnalyzeRunResult(BaseModel):
 
 class CommitAnalyzeRunAccepted(BaseModel):
     run_id: str = Field(description="비동기 실행 식별자")
-    status: CommitAnalyzeRunStatusValue = Field(
-        description='실행 상태("queued" 고정으로 시작)'
-    )
+    status: RunStatus = Field(description='실행 상태("queued" 고정으로 시작)')
     phase: CommitAnalyzeRunPhase = Field(
         description='실행 단계("queued" 고정으로 시작)'
     )
@@ -73,9 +63,7 @@ class CommitAnalyzeRunAccepted(BaseModel):
 
 class CommitAnalyzeRunStatus(BaseModel):
     run_id: str = Field(description="비동기 실행 식별자")
-    status: CommitAnalyzeRunStatusValue = Field(
-        description="queued/processing/completed/failed"
-    )
+    status: RunStatus = Field(description="queued/processing/completed/failed")
     phase: CommitAnalyzeRunPhase = Field(
         description=(
             "queued/summarizing/summary_ready/embedding/embedding_ready/failed. "

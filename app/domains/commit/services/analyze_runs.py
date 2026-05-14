@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from app.core.enums import CommitAnalyzeRunPhase, RunStatus
 from app.core.errors import AppServiceError
 from app.domains.commit.schemas import (
     CommitAnalyzeRequest,
     CommitAnalyzeRunAccepted,
-    CommitAnalyzeRunPhase,
     CommitAnalyzeRunResult,
     CommitAnalyzeRunStatus,
-    CommitAnalyzeRunStatusValue,
 )
 from app.domains.commit.services.diff_filter import filter_changed_files
 from app.domains.commit.services.summarize import (
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _CommitAnalyzeRunRecord:
     run_id: str
-    status: CommitAnalyzeRunStatusValue
+    status: RunStatus
     phase: CommitAnalyzeRunPhase
     request: CommitAnalyzeRequest
     submitted_at: datetime
@@ -59,7 +58,7 @@ def _cleanup_runs_locked() -> None:
     expired_ids = []
     for run_id, run in _runs.items():
         # 진행 중 실행은 TTL 삭제 대상에서 제외
-        if run.status in {"queued", "processing"}:
+        if run.status in {RunStatus.QUEUED, RunStatus.PROCESSING}:
             continue
         reference_time = run.finished_at or run.submitted_at
         if reference_time < expiry_cutoff:
@@ -75,7 +74,7 @@ def _cleanup_runs_locked() -> None:
         (
             item
             for item in _runs.items()
-            if item[1].status not in {"queued", "processing"}
+            if item[1].status not in {RunStatus.QUEUED, RunStatus.PROCESSING}
         ),
         key=lambda item: item[1].submitted_at,
     )
@@ -109,15 +108,15 @@ async def create_commit_analyze_run(
         run_id = uuid4().hex
         _runs[run_id] = _CommitAnalyzeRunRecord(
             run_id=run_id,
-            status="queued",
-            phase="queued",
+            status=RunStatus.QUEUED,
+            phase=CommitAnalyzeRunPhase.QUEUED,
             request=request.model_copy(deep=True),
             submitted_at=_utc_now(),
         )
         return CommitAnalyzeRunAccepted(
             run_id=run_id,
-            status="queued",
-            phase="queued",
+            status=RunStatus.QUEUED,
+            phase=CommitAnalyzeRunPhase.QUEUED,
             commit_id=request.commit_id,
             commit_hash=request.commit_hash,
             repository_id=request.repository_id,
@@ -130,8 +129,8 @@ async def _mark_run_processing(run_id: str) -> None:
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "processing"
-        run.phase = "summarizing"
+        run.status = RunStatus.PROCESSING
+        run.phase = CommitAnalyzeRunPhase.SUMMARIZING
         run.started_at = _utc_now()
         run.error = None
 
@@ -157,8 +156,8 @@ async def _mark_run_completed(run_id: str, result: CommitAnalyzeRunResult) -> No
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "completed"
-        run.phase = "embedding_ready"
+        run.status = RunStatus.COMPLETED
+        run.phase = CommitAnalyzeRunPhase.EMBEDDING_READY
         run.result = result.model_copy(deep=True)
         run.error = None
         run.finished_at = _utc_now()
@@ -170,8 +169,8 @@ async def _mark_run_failed(run_id: str, error: str) -> None:
         run = _runs.get(run_id)
         if not run:
             return
-        run.status = "failed"
-        run.phase = "failed"
+        run.status = RunStatus.FAILED
+        run.phase = CommitAnalyzeRunPhase.FAILED
         run.error = error
         run.finished_at = _utc_now()
 
@@ -214,13 +213,13 @@ async def run_commit_analyze_pipeline(run_id: str) -> None:
         )
         await _mark_run_phase(
             run_id=run_id,
-            phase="summary_ready",
+            phase=CommitAnalyzeRunPhase.SUMMARY_READY,
             result=result,
         )
 
         await _mark_run_phase(
             run_id=run_id,
-            phase="embedding",
+            phase=CommitAnalyzeRunPhase.EMBEDDING,
             result=result,
         )
         await store_commit_embedding(
