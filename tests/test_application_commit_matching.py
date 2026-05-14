@@ -17,7 +17,10 @@ from app.domains.commit.services.matching import (
     _to_application_entries,
     match_applications_with_commits,
 )
-from app.domains.commit.services.summarize import generate_embedding_text
+from app.domains.commit.services.summarize import (
+    _extract_path_module_tokens,
+    generate_embedding_text,
+)
 from app.main import app
 
 
@@ -547,6 +550,85 @@ class TestApplicationCommitMatchingEndpoint:
 
 
 class TestCommitAnalyzeHashMetadata:
+    def test_extract_path_module_tokens_filters_project_structure_words(self):
+        tokens = _extract_path_module_tokens(
+            [
+                ChangedFile(
+                    file_name=(
+                        "src/main/java/com/whylog/domain/team/service/"
+                        "TeamImageService.java"
+                    ),
+                    changed_code="+class TeamImageService {}",
+                ),
+                ChangedFile(
+                    file_name=(
+                        "src/main/java/com/whylog/domain/user/controller/"
+                        "UserProfileController.java"
+                    ),
+                    changed_code="+class UserProfileController {}",
+                ),
+            ]
+        )
+
+        assert {"team", "image", "user", "profile"}.issubset(set(tokens))
+        assert "src" not in tokens
+        assert "main" not in tokens
+        assert "java" not in tokens
+        assert "domain" not in tokens
+        assert "service" not in tokens
+        assert "controller" not in tokens
+        assert "whylog" not in tokens
+
+    def test_extract_path_module_tokens_filters_split_architecture_words(self):
+        tokens = _extract_path_module_tokens(
+            [
+                ChangedFile(
+                    file_name=(
+                        "src/main/java/com/whylog/domain/team/repository/"
+                        "BaseTeamRepositoryImpl.java"
+                    ),
+                    changed_code="+interface BaseTeamRepositoryImpl {}",
+                )
+            ]
+        )
+
+        assert tokens == ["team"]
+
+    def test_extract_path_module_tokens_splits_acronyms(self):
+        tokens = _extract_path_module_tokens(
+            [
+                ChangedFile(
+                    file_name=(
+                        "src/main/java/com/whylog/domain/user/"
+                        "URLParserXMLConfigController.java"
+                    ),
+                    changed_code="+class URLParserXMLConfigController {}",
+                )
+            ]
+        )
+
+        assert {"url", "parser", "xml", "user"}.issubset(set(tokens))
+        assert "config" not in tokens
+        assert "controller" not in tokens
+
+    def test_extract_path_module_tokens_skips_generated_directories(self):
+        tokens = _extract_path_module_tokens(
+            [
+                ChangedFile(
+                    file_name="build/generated/source/team/TeamClient.java",
+                    changed_code="+class TeamClient {}",
+                ),
+                ChangedFile(
+                    file_name="src/main/java/com/whylog/domain/user/UserService.java",
+                    changed_code="+class UserService {}",
+                ),
+            ]
+        )
+
+        assert "team" not in tokens
+        assert "client" not in tokens
+        assert "user" in tokens
+
     @pytest.mark.asyncio
     async def test_analyze_commit_passes_commit_hash_to_background_embedding(self):
         background_tasks = BackgroundTasks()
@@ -623,3 +705,105 @@ class TestCommitAnalyzeHashMetadata:
         assert kwargs["metadatas"][0]["commit_hash"] == "b8fd9ad"
         assert kwargs["metadatas"][0]["commit_message"] == "feat: API 구현"
         assert kwargs["metadatas"][0]["repository_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_text_merges_llm_modules_with_path_tokens(self):
+        collection = MagicMock()
+
+        with (
+            patch(
+                "app.domains.commit.services.summarize._get_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.domains.commit.services.summarize._call_gemini",
+                new_callable=AsyncMock,
+                return_value=(
+                    "변경요약: 팀 이미지 업로드 API 명세를 보강했습니다.\n"
+                    "기술키워드: Swagger,OpenAPI\n"
+                    "변경방향: modify\n"
+                    "파일맥락: swagger,team"
+                ),
+            ),
+            patch(
+                "app.domains.commit.services.summarize._generate_embedding",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "app.domains.commit.services.summarize.get_commit_collection",
+                return_value=collection,
+            ),
+        ):
+            await generate_embedding_text(
+                commit_hash="b8fd9ad",
+                repository_id=1,
+                message="docs: 팀 이미지 업로드 Swagger 명세 보강",
+                changed_file_list=[
+                    ChangedFile(
+                        file_name=(
+                            "src/main/java/com/whylog/domain/team/controller/"
+                            "TeamImageController.java"
+                        ),
+                        changed_code='+@Operation(summary = "팀 이미지 업로드")',
+                    )
+                ],
+                commit_id=1,
+            )
+
+        _, kwargs = collection.upsert.call_args
+        document = kwargs["documents"][0]
+        module_tags = set(kwargs["metadatas"][0]["module_tags_csv"].split(","))
+        assert {"swagger", "team", "image"}.issubset(module_tags)
+        assert "controller" not in module_tags
+        assert "파일맥락:" in document
+        assert "image" in document
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_text_caps_module_tags_with_llm_priority(self):
+        collection = MagicMock()
+        changed_files = [
+            ChangedFile(
+                file_name=f"src/main/java/com/whylog/domain/domain{i}/Domain{i}.java",
+                changed_code=f"+class Domain{i} {{}}",
+            )
+            for i in range(30)
+        ]
+
+        with (
+            patch(
+                "app.domains.commit.services.summarize._get_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.domains.commit.services.summarize._call_gemini",
+                new_callable=AsyncMock,
+                return_value=(
+                    "변경요약: 여러 도메인 파일을 수정했습니다.\n"
+                    "기술키워드: Spring\n"
+                    "변경방향: modify\n"
+                    "파일맥락: billing,team"
+                ),
+            ),
+            patch(
+                "app.domains.commit.services.summarize._generate_embedding",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "app.domains.commit.services.summarize.get_commit_collection",
+                return_value=collection,
+            ),
+        ):
+            await generate_embedding_text(
+                commit_hash="many-files",
+                repository_id=1,
+                message="chore: 여러 도메인 파일 수정",
+                changed_file_list=changed_files,
+                commit_id=1,
+            )
+
+        _, kwargs = collection.upsert.call_args
+        module_tags = kwargs["metadatas"][0]["module_tags_csv"].split(",")
+        assert module_tags[:2] == ["billing", "team"]
+        assert len(module_tags) == 20
