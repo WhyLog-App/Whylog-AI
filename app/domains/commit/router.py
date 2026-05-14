@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.core.errors import AppServiceError
@@ -25,6 +27,7 @@ from app.domains.commit.services.summarize import (
 )
 
 router = APIRouter(prefix="/commit", tags=["commit"])
+logger = logging.getLogger(__name__)
 
 COMMIT_ANALYZE_ASYNC_GUIDE = (
     "Spring 연동 가이드:\n"
@@ -108,6 +111,14 @@ async def analyze_commit(
     request: CommitAnalyzeRequest,
     background_tasks: BackgroundTasks,
 ) -> ApiResponse[CommitAnalyzeResponse]:
+    logger.info(
+        "Commit analyze request accepted: commit_hash=%s commit_id=%s "
+        "repository_id=%s file_count=%s mode=sync",
+        request.commit_hash,
+        request.commit_id,
+        request.repository_id,
+        len(request.changed_file_list),
+    )
     filtered_files = filter_changed_files(request.changed_file_list)
     if not filtered_files:
         raise AppServiceError("분석할 수 있는 변경 파일이 없습니다.", status_code=400)
@@ -175,6 +186,14 @@ async def create_commit_analyze_run(
     request: CommitAnalyzeRequest,
     background_tasks: BackgroundTasks,
 ) -> ApiResponse[CommitAnalyzeRunAccepted]:
+    logger.info(
+        "Commit analyze run requested: commit_hash=%s commit_id=%s "
+        "repository_id=%s file_count=%s",
+        request.commit_hash,
+        request.commit_id,
+        request.repository_id,
+        len(request.changed_file_list),
+    )
     accepted = await create_commit_analyze_run_record(request)
     background_tasks.add_task(run_commit_analyze_pipeline, accepted.run_id)
     return ok_response(
@@ -248,6 +267,20 @@ async def get_commit_analyze_run(
     status = await get_commit_analyze_run_status(run_id)
     if not status:
         raise HTTPException(status_code=404, detail="해당 실행을 찾을 수 없습니다.")
+    logger.info(
+        "Commit analyze run polled: run_id=%s status=%s phase=%s "
+        "commit_hash=%s commit_id=%s repository_id=%s has_result=%s "
+        "has_summary=%s embedding_ready=%s",
+        status.run_id,
+        status.status,
+        status.phase,
+        status.commit_hash,
+        status.commit_id,
+        status.repository_id,
+        status.result is not None,
+        bool(status.result and status.result.summary),
+        bool(status.result and status.result.embedding_ready),
+    )
     return ok_response(
         status,
         code="COMMIT_ANALYZE_200",
@@ -353,7 +386,20 @@ async def get_commit_analyze_run(
 async def match_application_commits(
     request: ApplicationCommitMatchRequest,
 ) -> ApiResponse[ApplicationCommitMatchResponse]:
+    logger.info(
+        "Commit match requested: meeting_id=%s repository_ids=%s top_k=%s",
+        request.meeting_id,
+        request.repository_ids,
+        request.top_k,
+    )
     result = await match_applications_with_commits(request)
+    logger.info(
+        "Commit match completed: meeting_id=%s total_applications=%s "
+        "matched_applications=%s",
+        result.meeting_id,
+        result.total_applications,
+        result.matched_applications,
+    )
     return ok_response(
         result=result,
         code="COMMIT_MATCH_200",

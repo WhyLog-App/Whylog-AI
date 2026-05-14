@@ -50,6 +50,15 @@ def _to_iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
+def _summary_preview(value: str | None, limit: int = 80) -> str | None:
+    if not value:
+        return None
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
 def _cleanup_runs_locked() -> None:
     # TTL/최대 개수 정책에 따라 run 저장소를 정리
     now = _utc_now()
@@ -133,6 +142,14 @@ async def _mark_run_processing(run_id: str) -> None:
         run.phase = CommitAnalyzeRunPhase.SUMMARIZING
         run.started_at = _utc_now()
         run.error = None
+        logger.info(
+            "Commit analyze run processing: run_id=%s commit_hash=%s "
+            "commit_id=%s repository_id=%s",
+            run_id,
+            run.request.commit_hash,
+            run.request.commit_id,
+            run.request.repository_id,
+        )
 
 
 async def _mark_run_phase(
@@ -148,6 +165,22 @@ async def _mark_run_phase(
         run.phase = phase
         if result is not None:
             run.result = result.model_copy(deep=True)
+        if phase in {
+            CommitAnalyzeRunPhase.SUMMARY_READY,
+            CommitAnalyzeRunPhase.EMBEDDING,
+        }:
+            logger.info(
+                "Commit analyze run phase updated: run_id=%s phase=%s "
+                "commit_hash=%s commit_id=%s repository_id=%s has_summary=%s "
+                "summary_preview=%s",
+                run_id,
+                phase,
+                run.request.commit_hash,
+                run.request.commit_id,
+                run.request.repository_id,
+                bool(run.result and run.result.summary),
+                _summary_preview(run.result.summary if run.result else None),
+            )
 
 
 async def _mark_run_completed(run_id: str, result: CommitAnalyzeRunResult) -> None:
@@ -161,6 +194,17 @@ async def _mark_run_completed(run_id: str, result: CommitAnalyzeRunResult) -> No
         run.result = result.model_copy(deep=True)
         run.error = None
         run.finished_at = _utc_now()
+        log = logger.info if result.summary else logger.warning
+        log(
+            "Commit analyze run completed: run_id=%s commit_hash=%s "
+            "commit_id=%s repository_id=%s has_summary=%s summary_preview=%s",
+            run_id,
+            run.request.commit_hash,
+            run.request.commit_id,
+            run.request.repository_id,
+            bool(result.summary),
+            _summary_preview(result.summary),
+        )
 
 
 async def _mark_run_failed(run_id: str, error: str) -> None:
@@ -173,6 +217,15 @@ async def _mark_run_failed(run_id: str, error: str) -> None:
         run.phase = CommitAnalyzeRunPhase.FAILED
         run.error = error
         run.finished_at = _utc_now()
+        logger.warning(
+            "Commit analyze run failed: run_id=%s commit_hash=%s commit_id=%s "
+            "repository_id=%s error=%s",
+            run_id,
+            run.request.commit_hash,
+            run.request.commit_id,
+            run.request.repository_id,
+            error,
+        )
 
 
 async def get_commit_analyze_run_status(
@@ -183,6 +236,7 @@ async def get_commit_analyze_run_status(
         _cleanup_runs_locked()
         run = _runs.get(run_id)
         if not run:
+            logger.warning("Commit analyze run not found at poll: run_id=%s", run_id)
             return None
         return _to_run_status(run)
 
