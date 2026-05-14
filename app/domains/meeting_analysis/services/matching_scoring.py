@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
 
-MatchStatus = Literal["APPLIED", "PARTIAL", "UNAPPLIED"]
-CommitType = Literal["feat", "fix", "docs", "refactor", "test", "build", "chore"]
+from app.core.enums import CommitType, MatchStatus
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9._/-]{1,}|[가-힣]{2,}")
 _PATH_LIKE_PATTERN = re.compile(r"[A-Za-z0-9._/-]+")
@@ -181,18 +179,18 @@ _LABEL_ALIASES = {
 }
 
 _COMMIT_TYPE_ALIASES: dict[str, CommitType] = {
-    "feature": "feat",
-    "feat": "feat",
-    "fix": "fix",
-    "bugfix": "fix",
-    "docs": "docs",
-    "doc": "docs",
-    "documentation": "docs",
-    "refactor": "refactor",
-    "test": "test",
-    "tests": "test",
-    "build": "build",
-    "chore": "chore",
+    "feature": CommitType.FEAT,
+    "feat": CommitType.FEAT,
+    "fix": CommitType.FIX,
+    "bugfix": CommitType.FIX,
+    "docs": CommitType.DOCS,
+    "doc": CommitType.DOCS,
+    "documentation": CommitType.DOCS,
+    "refactor": CommitType.REFACTOR,
+    "test": CommitType.TEST,
+    "tests": CommitType.TEST,
+    "build": CommitType.BUILD,
+    "chore": CommitType.CHORE,
 }
 
 _DOCS_APPLICATION_WORDS = {
@@ -335,15 +333,15 @@ def infer_application_commit_types(application_text: str) -> set[CommitType]:
     expected_types: set[CommitType] = set()
 
     if tokens & _DOCS_APPLICATION_WORDS:
-        expected_types.update({"docs", "chore"})
+        expected_types.update({CommitType.DOCS, CommitType.CHORE})
     if tokens & _FIX_APPLICATION_WORDS and (
         not expected_types or tokens & _FIX_ACTION_WORDS
     ):
-        expected_types.add("fix")
+        expected_types.add(CommitType.FIX)
     if tokens & _REFACTOR_APPLICATION_WORDS:
-        expected_types.add("refactor")
+        expected_types.add(CommitType.REFACTOR)
     if tokens & _FEATURE_APPLICATION_WORDS:
-        expected_types.add("feat")
+        expected_types.add(CommitType.FEAT)
     return expected_types
 
 
@@ -358,8 +356,8 @@ def score_commit_type_match(
     expected_types = infer_application_commit_types(application_text)
     commit_tokens = extract_text_tokens(f"{commit_message} {commit_text}")
     if (
-        commit_type == "chore"
-        and "docs" in expected_types
+        commit_type == CommitType.CHORE
+        and CommitType.DOCS in expected_types
         and not commit_tokens & _DOCS_APPLICATION_WORDS
     ):
         return 0
@@ -498,10 +496,10 @@ def is_ambiguous_application(
 
 def resolve_match_status(total_score: int) -> MatchStatus:
     if total_score >= 70:
-        return "APPLIED"
+        return MatchStatus.APPLIED
     if total_score >= 50:
-        return "PARTIAL"
-    return "UNAPPLIED"
+        return MatchStatus.PARTIAL
+    return MatchStatus.UNAPPLIED
 
 
 def _format_overlap(tokens: set[str], *, limit: int = 3) -> str:
@@ -579,7 +577,7 @@ def calculate_match_score(payload: ScoringInput) -> ScoreBreakdown:
             type_bonus=0,
             penalty=0,
             total=0,
-            status="UNAPPLIED",
+            status=MatchStatus.UNAPPLIED,
             is_opposite_direction=opposite_direction,
             is_goal_mismatch=True,
         )
