@@ -265,6 +265,8 @@ async def get_commit_analyze_run(
         "`repository_ids`에는 팀에 등록된 레포 ID 목록을 전달하며, "
         "해당 목록 밖의 커밋은 후보에서 제외합니다. "
         "`top_k`는 레포별 개수가 아니라 적용사항별 최대 추천 개수입니다.\n\n"
+        "신뢰도 70점 미만 후보는 추천에서 제외합니다. "
+        "따라서 아직 구현되지 않은 적용사항은 빈 추천 목록으로 반환될 수 있습니다.\n\n"
         "점수 정책(100점):\n"
         "- 의미 유사성 50\n"
         "- 기술 키워드 일치도 30\n"
@@ -319,6 +321,7 @@ async def get_commit_analyze_run(
                                                 "semantic": 44,
                                                 "keyword": 30,
                                                 "context": 20,
+                                                "type_bonus": 0,
                                                 "penalty": 0,
                                                 "total": 94,
                                             },
@@ -334,7 +337,10 @@ async def get_commit_analyze_run(
                                     ],
                                 }
                             ],
-                            "notice": "신뢰도는 AI 분석 기반 추정값입니다.",
+                            "notice": (
+                                "신뢰도는 AI 분석 기반 추정값이며, "
+                                "70점 미만 후보는 추천에서 제외됩니다."
+                            ),
                         },
                     }
                 }
