@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +15,10 @@ from app.domains.commit.schemas import (
     CommitAnalyzeRequest,
 )
 from app.domains.commit.services.matching import (
+    MIN_COMMIT_CANDIDATE_POOL_SIZE,
+    MIN_RECOMMENDATION_CONFIDENCE,
+    ApplicationEntry,
+    _build_match_record,
     _to_application_entries,
     match_applications_with_commits,
 )
@@ -30,6 +35,45 @@ def _build_match_payload() -> dict:
         "repository_ids": [1],
         "top_k": 5,
     }
+
+
+def _build_application_entry() -> ApplicationEntry:
+    return ApplicationEntry(
+        document_id="meeting-123_application0",
+        text="title: Redis 알림 안정화 | text: redis cache 안정화",
+        embedding=[0.1, 0.2],
+        application_id=101,
+        application_title="redis cache 안정화",
+        direction_labels={"modify"},
+        keywords={"redis"},
+        modules={"cache"},
+    )
+
+
+def _build_commit_metadata() -> dict:
+    return {
+        "commit_ref": "commit-1",
+        "commit_hash": "hash-1",
+        "repository_id": 1,
+        "direction_primary": "modify",
+        "direction_multi_csv": "modify",
+        "tech_keywords_csv": "redis",
+        "module_tags_csv": "cache",
+        "commit_message": "fix: redis cache 안정화",
+    }
+
+
+def _build_score(total: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        semantic=40,
+        keyword=20,
+        context=max(0, total - 60),
+        type_bonus=0,
+        penalty=0,
+        total=total,
+        is_opposite_direction=False,
+        is_goal_mismatch=False,
+    )
 
 
 class TestApplicationCommitMatchingService:
@@ -69,8 +113,41 @@ class TestApplicationCommitMatchingService:
 
         assert entries[0].application_id is None
 
+    def test_match_record_includes_threshold_boundary(self):
+        with patch(
+            "app.domains.commit.services.matching.calculate_match_score",
+            return_value=_build_score(MIN_RECOMMENDATION_CONFIDENCE),
+        ):
+            record = _build_match_record(
+                application=_build_application_entry(),
+                application_index=0,
+                commit_id="commit-1",
+                commit_document="title: redis cache | text: redis cache 안정화",
+                metadata=_build_commit_metadata(),
+                distance=0.1,
+            )
+
+        assert record is not None
+        assert record.commit.confidence == MIN_RECOMMENDATION_CONFIDENCE
+
+    def test_match_record_excludes_below_threshold_boundary(self):
+        with patch(
+            "app.domains.commit.services.matching.calculate_match_score",
+            return_value=_build_score(MIN_RECOMMENDATION_CONFIDENCE - 1),
+        ):
+            record = _build_match_record(
+                application=_build_application_entry(),
+                application_index=0,
+                commit_id="commit-1",
+                commit_document="title: redis cache | text: redis cache 안정화",
+                metadata=_build_commit_metadata(),
+                distance=0.1,
+            )
+
+        assert record is None
+
     @pytest.mark.asyncio
-    async def test_returns_recommended_commits_sorted_by_confidence(self):
+    async def test_returns_confident_recommended_commits_sorted_by_confidence(self):
         application_collection = MagicMock()
         application_collection.get.return_value = {
             "ids": ["meeting-123_application0"],
@@ -168,7 +245,7 @@ class TestApplicationCommitMatchingService:
         assert result.matched_applications == 1
         item = result.applications[0]
         assert item.application_id == 101
-        assert len(item.recommended_commits) == 2
+        assert len(item.recommended_commits) == 1
         assert item.recommended_commits[0].commit_id == 1
         assert item.recommended_commits[0].commit_hash == "h1"
         assert item.recommended_commits[0].commit_message == (
@@ -180,12 +257,79 @@ class TestApplicationCommitMatchingService:
         assert "커밋 타입 가산 +3점" in item.recommended_commits[0].score_detail
         assert "겹친 키워드" in item.recommended_commits[0].score_detail
         assert item.recommended_commits[0].score_breakdown.type_bonus == 3
-        assert item.recommended_commits[1].commit_hash == "h2"
-        assert item.recommended_commits[0].confidence >= (
-            item.recommended_commits[1].confidence
-        )
         commit_collection.query.assert_called_once()
         assert commit_collection.query.call_args.kwargs["where"] == {"repository_id": 1}
+        assert (
+            commit_collection.query.call_args.kwargs["n_results"]
+            == MIN_COMMIT_CANDIDATE_POOL_SIZE
+        )
+
+    @pytest.mark.asyncio
+    async def test_excludes_candidates_below_recommendation_threshold(self):
+        application_collection = MagicMock()
+        application_collection.get.return_value = {
+            "ids": ["meeting-123_application0"],
+            "documents": [
+                (
+                    "title: Redis 알림 안정화 | text: 적용사항: "
+                    "redis kafka notification 안정화"
+                )
+            ],
+            "metadatas": [
+                {
+                    "application_id": 101,
+                    "application_title": "redis kafka notification 안정화",
+                }
+            ],
+            "embeddings": [[0.11, 0.22, 0.33]],
+        }
+
+        commit_collection = MagicMock()
+        commit_collection.query.return_value = {
+            "ids": [["commit_partial"]],
+            "documents": [
+                [
+                    (
+                        "title: repository-1 update | text: 변경요약: redis 설정 수정 "
+                        "| 기술키워드: redis | 변경방향: modify "
+                        "| 파일맥락: cache"
+                    )
+                ]
+            ],
+            "metadatas": [
+                [
+                    {
+                        "commit_ref": "c-partial",
+                        "commit_hash": "h-partial",
+                        "repository_id": 1,
+                        "direction_primary": "modify",
+                        "direction_multi_csv": "modify",
+                        "tech_keywords_csv": "redis",
+                        "module_tags_csv": "cache",
+                        "commit_message": "update redis config",
+                    }
+                ]
+            ],
+            "distances": [[0.50]],
+        }
+
+        with (
+            patch(
+                "app.domains.commit.services.matching.get_application_collection",
+                return_value=application_collection,
+            ),
+            patch(
+                "app.domains.commit.services.matching.get_commit_collection",
+                return_value=commit_collection,
+            ),
+        ):
+            result = await match_applications_with_commits(
+                ApplicationCommitMatchRequest(**_build_match_payload())
+            )
+
+        assert result.total_applications == 1
+        assert result.matched_applications == 0
+        assert result.applications[0].recommended_commits == []
 
     @pytest.mark.asyncio
     async def test_multiple_repository_ids_query_with_in_filter(self):
