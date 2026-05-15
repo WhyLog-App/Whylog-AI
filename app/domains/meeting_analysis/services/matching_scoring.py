@@ -517,8 +517,6 @@ def build_connection_reason(
     keyword_overlap: set[str] | None = None,
     module_overlap: set[str] | None = None,
 ) -> str:
-    if score.total < 50:
-        return "신뢰도 임계치 미달로 자동 연결하지 않았습니다."
     if score.is_opposite_direction:
         return "의미 방향이 반대여서 자동 연결을 제한했습니다."
     if score.is_goal_mismatch:
