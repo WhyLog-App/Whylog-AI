@@ -25,6 +25,9 @@ from app.domains.meeting_analysis.services.matching_scoring import (
 )
 
 logger = logging.getLogger(__name__)
+MIN_RECOMMENDATION_CONFIDENCE = 70
+MIN_COMMIT_CANDIDATE_POOL_SIZE = 50
+MAX_COMMIT_CANDIDATE_POOL_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -313,7 +316,7 @@ def _build_match_record(
         )
     )
 
-    if score.total < 50:
+    if score.total < MIN_RECOMMENDATION_CONFIDENCE:
         return None
 
     matched_commit = MatchedCommit(
@@ -370,7 +373,10 @@ async def match_applications_with_commits(
             applications=[],
         )
 
-    pool_size = min(100, payload.top_k * 5)
+    pool_size = min(
+        MAX_COMMIT_CANDIDATE_POOL_SIZE,
+        max(MIN_COMMIT_CANDIDATE_POOL_SIZE, payload.top_k * 5),
+    )
     matched_by_application: dict[int, dict[str, MatchRecord]] = {
         idx: {} for idx in range(len(application_entries))
     }
