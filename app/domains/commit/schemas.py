@@ -117,7 +117,7 @@ class ApplicationCommitMatchRequest(BaseModel):
         default=5,
         ge=1,
         le=30,
-        description="적용사항별 추천 커밋 상위 K",
+        description="적용사항별 추천 커밋 최대 K개",
     )
 
 
@@ -155,7 +155,7 @@ class ApplicationCommitMatchItem(BaseModel):
     application_title: str = Field(description="적용사항 제목")
     recommended_commits: list[MatchedCommit] = Field(
         default_factory=list,
-        description="신뢰도 내림차순 추천 커밋 목록",
+        description="신뢰도 70점 이상인 추천 커밋 목록(내림차순)",
     )
 
 
@@ -165,11 +165,15 @@ class ApplicationCommitMatchResponse(BaseModel):
         description="매칭 후보로 사용한 레포지토리 ID 목록"
     )
     total_applications: int = Field(description="조회된 적용사항 문서 수")
-    matched_applications: int = Field(description="추천 결과가 존재하는 적용사항 수")
+    matched_applications: int = Field(
+        description="신뢰도 70점 이상 추천 결과가 존재하는 적용사항 수"
+    )
     applications: list[ApplicationCommitMatchItem] = Field(
         default_factory=list, description="적용사항 단위 매칭 결과"
     )
     notice: str = Field(
-        default="신뢰도는 AI 분석 기반 추정값입니다.",
+        default=(
+            "신뢰도는 AI 분석 기반 추정값이며, 70점 미만 후보는 추천에서 제외됩니다."
+        ),
         description="신뢰도 안내 문구",
     )
