@@ -4,8 +4,11 @@ from app.domains.meeting_analysis.schemas import (
     MeetingAnalysisResult,
 )
 from app.domains.meeting_analysis.services.extraction import (
+    APPLICATION_POLICY_PROMPT,
+    APPLICATIONS_ONLY_PROMPT,
     CONCRETE_APPLICATION_RULE,
     NOUN_ENDING_REASON_RULE,
+    TIMELINE_EVIDENCE_ALIGNMENT_RULE,
     _normalize_application_reason_outputs,
     _normalize_overall_reason_outputs,
 )
@@ -25,6 +28,21 @@ class TestApplicationReasonFormat:
         assert "실제 실행/반영 단위" in joined_rule
         assert "두루뭉술한 표현은 절대 사용하지 않는다" in joined_rule
         assert "WebSocket 발화로그 기준으로 STT 화자 보정 적용" in joined_rule
+
+    def test_timeline_prompt_rule_requires_intent_aligned_evidence(self):
+        joined_rule = "\n".join(TIMELINE_EVIDENCE_ALIGNMENT_RULE)
+
+        assert "핵심 작업 의도" in joined_rule
+        assert "같은 화면, API, 도메인명이 겹쳐도" in joined_rule
+        assert "무엇을 바꾸기로 했는가" in joined_rule
+        assert "커밋 상세 페이지 로딩 스피너 컴포넌트 적용" in joined_rule
+        assert "응답 필드명 통일" in joined_rule
+
+    def test_timeline_evidence_alignment_rule_is_used_by_analysis_prompts(self):
+        for prompt in (APPLICATION_POLICY_PROMPT, APPLICATIONS_ONLY_PROMPT):
+            assert "타임라인 근거 정렬 규칙" in prompt
+            assert "같은 application의 timeline에 넣지 않는다" in prompt
+            assert "공통 범위 키워드만 겹치는 발화" in prompt
 
     def test_application_reasons_are_normalized_to_noun_endings(self):
         result = MeetingAnalysisResult(
