@@ -23,6 +23,8 @@ from app.domains.commit.services.matching import (
     match_applications_with_commits,
 )
 from app.domains.commit.services.summarize import (
+    CommitAnalysis,
+    ParsedEmbedding,
     _extract_path_module_tokens,
     generate_embedding_text,
 )
@@ -791,18 +793,31 @@ class TestCommitAnalyzeHashMetadata:
             ],
         )
 
+        analysis = CommitAnalysis(
+            summary="API를 구현했습니다.",
+            embedding=ParsedEmbedding(
+                summary="API 엔드포인트를 추가했습니다.",
+                tech_keywords=["fastapi"],
+                directions=["add"],
+                module_tags=["api"],
+            ),
+        )
+
         with patch(
-            "app.domains.commit.router.summarize_commit",
+            "app.domains.commit.router.analyze_commit_content",
             new_callable=AsyncMock,
-            return_value="API를 구현했습니다.",
-        ):
+            return_value=analysis,
+        ) as analyze_mock:
             response = await analyze_commit(request, background_tasks)
 
         assert response.result.commit_id == 1
+        assert response.result.summary == "API를 구현했습니다."
+        analyze_mock.assert_awaited_once()
         task = background_tasks.tasks[0]
         assert task.kwargs["commit_hash"] == "b8fd9ad"
         assert task.kwargs["repository_id"] == 1
         assert task.kwargs["commit_id"] == 1
+        assert task.kwargs["analysis"] is analysis
 
     @pytest.mark.asyncio
     async def test_generate_embedding_text_stores_commit_hash_metadata(self):
@@ -851,6 +866,51 @@ class TestCommitAnalyzeHashMetadata:
         assert kwargs["metadatas"][0]["commit_hash"] == "b8fd9ad"
         assert kwargs["metadatas"][0]["commit_message"] == "feat: API 구현"
         assert kwargs["metadatas"][0]["repository_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_text_reuses_analysis_without_llm(self):
+        collection = MagicMock()
+        analysis = CommitAnalysis(
+            summary="API를 구현했습니다.",
+            embedding=ParsedEmbedding(
+                summary="API 엔드포인트를 추가했습니다.",
+                tech_keywords=["fastapi"],
+                directions=["add"],
+                module_tags=["commit"],
+            ),
+        )
+
+        with (
+            patch(
+                "app.domains.commit.services.summarize._call_gemini",
+                new_callable=AsyncMock,
+            ) as gemini_mock,
+            patch(
+                "app.domains.commit.services.summarize._generate_embedding",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "app.domains.commit.services.summarize.get_commit_collection",
+                return_value=collection,
+            ),
+        ):
+            await generate_embedding_text(
+                commit_hash="b8fd9ad",
+                repository_id=1,
+                message="feat: API 구현",
+                changed_file_list=[
+                    ChangedFile(
+                        file_name="app/domains/api.py",
+                        changed_code="+def handler():\n+    return True",
+                    )
+                ],
+                commit_id=1,
+                analysis=analysis,
+            )
+
+        gemini_mock.assert_not_awaited()
+        collection.upsert.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_generate_embedding_text_merges_llm_modules_with_path_tokens(self):
