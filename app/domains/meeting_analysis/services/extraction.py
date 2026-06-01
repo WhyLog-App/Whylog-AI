@@ -92,6 +92,19 @@ CONCRETE_APPLICATION_RULE = [
     '6. "개선하기로 함", "논의하기로 함", "준비하기로 함"처럼',
     "   대상/방법이 빠진 두루뭉술한 표현은 절대 사용하지 않는다.",
 ]
+TIMELINE_EVIDENCE_ALIGNMENT_RULE = [
+    "[타임라인 근거 정렬 규칙 - 반드시 준수]",
+    "1. timeline은 application_title/application_reasons의 핵심 작업 의도를",
+    "   직접 뒷받침하는 발화만 포함한다.",
+    "2. 같은 화면, API, 도메인명이 겹쳐도 작업 의도가 다르면",
+    "   같은 application의 timeline에 넣지 않는다.",
+    "3. '어디에 적용하는가'보다 '무엇을 바꾸기로 했는가'를 우선한다.",
+    '4. 예: "커밋 상세 페이지 로딩 스피너 컴포넌트 적용"에는',
+    '   "응답 필드명 통일" 발화를 포함하지 않는다.',
+    '5. 예: "커밋 상세 API 응답 필드명 통일"에는',
+    '   "로딩 스피너 적용" 발화를 포함하지 않는다.',
+    "6. 공통 범위 키워드만 겹치는 발화는 other_mentions로 보내거나 제외한다.",
+]
 
 APPLICATION_POLICY_PROMPT = "\n".join(
     [
@@ -124,6 +137,7 @@ APPLICATION_POLICY_PROMPT = "\n".join(
         "   member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. timeline의 content는 간략한 한 문장으로 작성한다.",
         *CONCRETE_APPLICATION_RULE,
+        *TIMELINE_EVIDENCE_ALIGNMENT_RULE,
         "------------------------------------------------------------",
         "",
         "[출력 JSON 구조]:",
@@ -217,6 +231,7 @@ APPLICATIONS_ONLY_PROMPT = "\n".join(
         "3. member_id는 STT 데이터의 member_id 값을 사용하고, 없으면 null로 둔다.",
         "4. content는 간략한 한 문장으로 작성한다.",
         *CONCRETE_APPLICATION_RULE,
+        *TIMELINE_EVIDENCE_ALIGNMENT_RULE,
         "",
         "[출력 JSON 구조]",
         "{",
