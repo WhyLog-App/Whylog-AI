@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "description": "실제 Whylog-AI 커밋을 기준으로 만든 적용사항-커밋 매칭 평가셋입니다.",
+  "cases": [
+    {
+      "case_id": "gemini-quota-retry",
+      "application_id": 9101,
+      "application_title": "Gemini API 사용량 초과 시 재시도 로직 추가",
+      "application_reasons": [
+        "Gemini 호출이 429 또는 일시적 오류로 실패할 때 분석 파이프라인이 중단되지 않아야 합니다.",
+        "재시도와 백오프를 통해 회의 분석/커밋 분석 안정성을 높여야 합니다."
+      ],
+      "expected_commit_hashes": [
+        "5706bbfddb71a374545106ee3c7fc83797925964"
+      ],
+      "distractor_commit_hashes": [
+        "7c67758a4dfaca4cf18e264da011569ae868ba64"
+      ],
+      "should_match": true,
+      "tags": ["gemini", "retry", "hard_negative"]
+    },
+    {
+      "case_id": "live-transcript-merge",
+      "application_id": 9102,
+      "application_title": "WebSocket 발화 로그와 STT 전사 병합 기준 보강",
+      "application_reasons": [
+        "회의 발화자 정보와 전사 텍스트를 더 정확히 결합해야 합니다.",
+        "짧은 WebSocket 발화가 긴 STT 전사 결과를 과도하게 덮어쓰지 않도록 해야 합니다."
+      ],
+      "expected_commit_hashes": [
+        "cd139b09dc4f1d88b500af35cc39984ef714ce2b"
+      ],
+      "distractor_commit_hashes": [],
+      "should_match": true,
+      "tags": ["transcribe", "websocket", "stt"]
+    },
+    {
+      "case_id": "application-timeline-embedding",
+      "application_id": 9103,
+      "application_title": "적용사항 임베딩에 회의 타임라인 맥락 반영",
+      "application_reasons": [
+        "적용사항 제목과 근거만으로는 매칭 의도가 부족합니다.",
+        "대안논의와 적용합의 내용을 임베딩 텍스트에 포함해 커밋 추천 품질을 높여야 합니다."
+      ],
+      "expected_commit_hashes": [
+        "3b50917d1ca2f9f811734ac02604bdae93dec86f"
+      ],
+      "distractor_commit_hashes": [],
+      "should_match": true,
+      "tags": ["application", "embedding", "timeline"]
+    },
+    {
+      "case_id": "commit-path-module-token",
+      "application_id": 9104,
+      "application_title": "커밋 파일 경로 기반 모듈 토큰 보강",
+      "application_reasons": [
+        "LLM이 모듈 태그를 놓쳐도 변경 파일 경로에서 도메인 맥락을 추출해야 합니다.",
+        "controller/service 같은 구조 단어는 제외하고 실제 도메인 토큰을 매칭 점수에 반영해야 합니다."
+      ],
+      "expected_commit_hashes": [
+        "daafb71463b87525d65187a04f78d9d9e98c5e24"
+      ],
+      "distractor_commit_hashes": [],
+      "should_match": true,
+      "tags": ["commit", "path", "module"]
+    },
+    {
+      "case_id": "no-match-dinner-menu",
+      "application_id": 9105,
+      "application_title": "저녁 메뉴로 치킨과 맥주를 선정",
+      "application_reasons": [
+        "서비스 구현과 무관한 회의 잡담성 결정은 커밋 추천이 없어야 합니다."
+      ],
+      "expected_commit_hashes": [],
+      "distractor_commit_hashes": [
+        "8af78f0e97ca30b22a8c8782ce372b2a59fe3819"
+      ],
+      "should_match": false,
+      "tags": ["no_match", "false_positive_guard"]
+    }
+  ]
+}
