@@ -10,6 +10,7 @@ from app.domains.commit.services.analyze_runs import (
     get_commit_analyze_run_status,
     run_commit_analyze_pipeline,
 )
+from app.domains.commit.services.summarize import CommitAnalysis, ParsedEmbedding
 from app.main import app
 
 
@@ -73,13 +74,22 @@ class TestCommitAnalyzeRunService:
             **_build_analyze_payload(),
         )
         accepted = await create_commit_analyze_run(request)
+        analysis = CommitAnalysis(
+            summary="Swagger 에러 응답 예시 문서화를 보강했습니다.",
+            embedding=ParsedEmbedding(
+                summary="Swagger 에러 응답 예시 문서화를 보강했습니다.",
+                tech_keywords=["Swagger"],
+                directions=["add"],
+                module_tags=["swagger"],
+            ),
+        )
 
         with (
             patch(
-                "app.domains.commit.services.analyze_runs.summarize_commit",
+                "app.domains.commit.services.analyze_runs.analyze_commit_content",
                 new_callable=AsyncMock,
-                return_value="Swagger 에러 응답 예시 문서화를 보강했습니다.",
-            ) as summarize_mock,
+                return_value=analysis,
+            ) as analyze_mock,
             patch(
                 "app.domains.commit.services.analyze_runs.store_commit_embedding",
                 new_callable=AsyncMock,
@@ -95,8 +105,49 @@ class TestCommitAnalyzeRunService:
         assert status.result is not None
         assert status.result.summary == "Swagger 에러 응답 예시 문서화를 보강했습니다."
         assert status.result.embedding_ready is True
-        summarize_mock.assert_awaited_once()
+        analyze_mock.assert_awaited_once()
         embedding_mock.assert_awaited_once()
+        assert embedding_mock.await_args.kwargs["analysis"] is analysis
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_marks_failed_when_embedding_save_fails(self):
+        request = CommitAnalyzeRequest(
+            **_build_analyze_payload(),
+        )
+        accepted = await create_commit_analyze_run(request)
+        analysis = CommitAnalysis(
+            summary="Swagger 에러 응답 예시 문서화를 보강했습니다.",
+            embedding=ParsedEmbedding(
+                summary="Swagger 에러 응답 예시 문서화를 보강했습니다.",
+                tech_keywords=["Swagger"],
+                directions=["add"],
+                module_tags=["swagger"],
+            ),
+        )
+
+        with (
+            patch(
+                "app.domains.commit.services.analyze_runs.analyze_commit_content",
+                new_callable=AsyncMock,
+                return_value=analysis,
+            ),
+            patch(
+                "app.domains.commit.services.analyze_runs.store_commit_embedding",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("chroma unavailable"),
+            ),
+        ):
+            await run_commit_analyze_pipeline(accepted.run_id)
+
+        status = await get_commit_analyze_run_status(accepted.run_id)
+
+        assert status is not None
+        assert status.status == "failed"
+        assert status.phase == "failed"
+        assert status.result is not None
+        assert status.result.summary == "Swagger 에러 응답 예시 문서화를 보강했습니다."
+        assert status.result.embedding_ready is False
+        assert status.error == "unexpected_error: chroma unavailable"
 
     @pytest.mark.asyncio
     async def test_run_pipeline_fails_when_all_files_are_filtered(self):

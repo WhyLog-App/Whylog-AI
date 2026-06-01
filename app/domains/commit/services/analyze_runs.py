@@ -14,8 +14,8 @@ from app.domains.commit.schemas import (
 )
 from app.domains.commit.services.diff_filter import filter_changed_files
 from app.domains.commit.services.summarize import (
+    analyze_commit_content,
     store_commit_embedding,
-    summarize_commit,
 )
 
 RUN_TTL = timedelta(hours=24)
@@ -203,12 +203,12 @@ async def run_commit_analyze_pipeline(run_id: str) -> None:
             )
 
         await _mark_run_processing(run_id)
-        summary = await summarize_commit(request.message, filtered_files)
+        analysis = await analyze_commit_content(request.message, filtered_files)
         result = CommitAnalyzeRunResult(
             commit_id=request.commit_id,
             commit_hash=request.commit_hash,
             repository_id=request.repository_id,
-            summary=summary,
+            summary=analysis.summary,
             embedding_ready=False,
         )
         await _mark_run_phase(
@@ -228,6 +228,7 @@ async def run_commit_analyze_pipeline(run_id: str) -> None:
             message=request.message,
             changed_file_list=filtered_files,
             commit_id=request.commit_id,
+            analysis=analysis,
         )
 
         completed_result = result.model_copy(update={"embedding_ready": True})

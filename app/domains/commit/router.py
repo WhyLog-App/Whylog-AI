@@ -20,8 +20,8 @@ from app.domains.commit.services.analyze_runs import (
 from app.domains.commit.services.diff_filter import filter_changed_files
 from app.domains.commit.services.matching import match_applications_with_commits
 from app.domains.commit.services.summarize import (
+    analyze_commit_content,
     generate_embedding_text,
-    summarize_commit,
 )
 
 router = APIRouter(prefix="/commit", tags=["commit"])
@@ -112,7 +112,7 @@ async def analyze_commit(
     if not filtered_files:
         raise AppServiceError("분석할 수 있는 변경 파일이 없습니다.", status_code=400)
 
-    summary = await summarize_commit(request.message, filtered_files)
+    analysis = await analyze_commit_content(request.message, filtered_files)
     background_tasks.add_task(
         generate_embedding_text,
         commit_hash=request.commit_hash,
@@ -120,12 +120,13 @@ async def analyze_commit(
         message=request.message,
         changed_file_list=filtered_files,
         commit_id=request.commit_id,
+        analysis=analysis,
     )
     return ok_response(
         CommitAnalyzeResponse(
             commit_hash=request.commit_hash,
             commit_id=request.commit_id,
-            summary=summary,
+            summary=analysis.summary,
         )
     )
 

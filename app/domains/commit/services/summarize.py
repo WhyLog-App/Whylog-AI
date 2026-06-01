@@ -18,14 +18,17 @@ from app.domains.commit.schemas import ChangedFile
 RETRY_BACKOFFS = (1.0, 2.0)  # 1차 실패 후 1초, 2차 실패 후 2초 대기
 logger = logging.getLogger(__name__)
 
-EMBEDDING_PROMPT = """
-너는 Git 커밋의 diff를 분석해서 구조화된 임베딩용 텍스트를 생성하는 전문가야.
+COMMIT_ANALYSIS_PROMPT = """
+너는 Git 커밋의 diff를 분석해서 사용자 표시용 요약과
+임베딩용 구조화 정보를 동시에 생성하는 전문가야.
 
 ## 절대 원칙
 - 커밋 메시지와 diff에 없는 내용을 추측하거나 만들어내지 마.
 - 코드 변경 사실만 기술해. 의도나 동기를 추론하지 마.
+- 요약은 사용자에게 보여줄 문장이고, 변경요약은 검색/임베딩에 사용할 기술 맥락이야.
 
 ## 응답 형식 (정확히 이 형식으로만 출력해)
+요약: (사용자에게 보여줄 핵심 변경 내용 1문장)
 변경요약: (코드 변경 사실을 1~2문장으로)
 기술키워드: (DB, 프레임워크, 라이브러리, 모듈 등 기술 요소만 쉼표 구분)
 변경방향: (이 커밋의 기능 방향을
@@ -33,7 +36,10 @@ EMBEDDING_PROMPT = """
 파일맥락: (변경된 파일 경로에서 비즈니스 도메인 토큰만 쉼표 구분)
 
 ## 주의
-- 위 4줄만 출력해. 다른 설명이나 마크다운, 코드블록을 추가하지 마.
+- 위 5줄만 출력해. 다른 설명이나 마크다운, 코드블록을 추가하지 마.
+- 요약에는 파일명, 메서드명, 클래스명 같은 기술적 식별자를 포함하지 마.
+- 요약은 기술 구현 방식(어떻게)보다 기능·목적(무엇을, 왜)에 집중해.
+- 요약은 회의 발언처럼 읽히는 자연스러운 한국어로 작성해.
 - 기술키워드에 일반 단어(함수, 파일, 코드 등)는 넣지 마. 구체적 기술명만 넣어.
 - 변경방향은 코드 라인 단위가 아니라 커밋 전체의 기능적 목적 기준으로 판단해.
   예) 새 API 추가 → add, 버그 수정 → modify, 기능 삭제 → remove,
@@ -41,19 +47,6 @@ EMBEDDING_PROMPT = """
 - 파일맥락은 프로젝트 구조 디렉토리는 제외하고
   (controller, service, domain, components, pages 등)
   auth, meeting, billing 같은 비즈니스 도메인만 추출해.
-""".strip()
-
-SUMMARY_PROMPT = """
-너는 Git 커밋을 분석해서 1~2문장으로 요약하는 전문가야.
-
-## 절대 원칙
-- 커밋 메시지와 diff에 없는 내용을 추측하거나 만들어내지 마.
-- 파일명, 메서드명, 클래스명 같은 기술적 식별자는 포함하지 마.
-- 기술 구현 방식(어떻게)보다 기능·목적(무엇을, 왜)에 집중해.
-- 회의 발언처럼 읽히는 자연스러운 한국어로 작성해.
-
-## 응답 형식
-마크다운, 코드블록, 접두어, 추가 설명 없이 핵심 변경 내용만 1문장으로 출력해.
 """.strip()
 
 
@@ -128,8 +121,22 @@ class ParsedEmbedding:
     module_tags: list[str]
 
 
+@dataclass
+class CommitAnalysis:
+    """커밋 요약 응답과 임베딩 저장 재료를 함께 담은 분석 결과."""
+
+    summary: str
+    embedding: ParsedEmbedding
+
+
 def _parse_embedding_response(text: str) -> ParsedEmbedding:
     """LLM 구조화 응답에서 변경요약/기술키워드/변경방향/파일맥락을 추출한다."""
+    return _parse_commit_analysis_response(text).embedding
+
+
+def _parse_commit_analysis_response(text: str) -> CommitAnalysis:
+    """LLM 통합 분석 응답에서 사용자 요약과 임베딩 재료를 추출한다."""
+    display_summary = ""
     summary = ""
     tech_keywords: list[str] = []
     directions: list[str] = []
@@ -137,7 +144,9 @@ def _parse_embedding_response(text: str) -> ParsedEmbedding:
 
     for line in text.strip().splitlines():
         line = line.strip()
-        if line.startswith("변경요약:"):
+        if line.startswith("요약:"):
+            display_summary = line.removeprefix("요약:").strip()
+        elif line.startswith("변경요약:"):
             summary = line.removeprefix("변경요약:").strip()
         elif line.startswith("기술키워드:"):
             raw = line.removeprefix("기술키워드:").strip()
@@ -151,14 +160,21 @@ def _parse_embedding_response(text: str) -> ParsedEmbedding:
             raw = line.removeprefix("파일맥락:").strip()
             module_tags = [t.strip() for t in raw.split(",") if t.strip()]
 
+    if not summary and display_summary:
+        summary = display_summary
+    if not display_summary and summary:
+        display_summary = summary
     if not summary:
         raise ValueError("LLM 응답에서 변경요약을 추출할 수 없습니다.")
 
-    return ParsedEmbedding(
-        summary=summary,
-        tech_keywords=tech_keywords,
-        directions=directions,
-        module_tags=module_tags,
+    return CommitAnalysis(
+        summary=display_summary,
+        embedding=ParsedEmbedding(
+            summary=summary,
+            tech_keywords=tech_keywords,
+            directions=directions,
+            module_tags=module_tags,
+        ),
     )
 
 
@@ -278,35 +294,48 @@ async def _generate_embedding(text: str, timeout: float = 30.0) -> list[float]:
     raise last_error  # type: ignore[misc]
 
 
-async def summarize_commit(
+async def analyze_commit_content(
     message: str,
     changed_file_list: list[ChangedFile],
-) -> str:
+) -> CommitAnalysis:
     client = _get_client()
     commit_input = _build_commit_input(message, changed_file_list)
 
     try:
-        summary = await _call_gemini(client, SUMMARY_PROMPT, commit_input, timeout=15.0)
-        if not summary:
+        raw_text = await _call_gemini(
+            client,
+            COMMIT_ANALYSIS_PROMPT,
+            commit_input,
+            timeout=60.0,
+        )
+        analysis = _parse_commit_analysis_response(raw_text)
+        if not analysis.summary:
             raise ValueError("LLM 응답이 비어 있습니다.")
-        return summary
+        return analysis
     except ValueError as e:
         logger.error("Gemini 응답 파싱 실패: %s", e)
         raise AppServiceError(
-            "커밋 요약 응답을 파싱할 수 없습니다.", status_code=502
+            "커밋 분석 응답을 파싱할 수 없습니다.", status_code=502
         ) from e
     except TimeoutError as e:
-        logger.error("Gemini 커밋 요약 타임아웃")
+        logger.error("Gemini 커밋 분석 타임아웃")
         raise AppServiceError(
             "Gemini 응답 시간이 초과되었습니다.", status_code=504
         ) from e
     except AppServiceError:
         raise
     except Exception as e:
-        logger.exception("Gemini 커밋 요약 실패")
+        logger.exception("Gemini 커밋 분석 실패")
         raise AppServiceError(
-            "커밋 요약 중 오류가 발생했습니다.", status_code=502
+            "커밋 분석 중 오류가 발생했습니다.", status_code=502
         ) from e
+
+
+async def summarize_commit(
+    message: str,
+    changed_file_list: list[ChangedFile],
+) -> str:
+    return (await analyze_commit_content(message, changed_file_list)).summary
 
 
 async def store_commit_embedding(
@@ -315,14 +344,14 @@ async def store_commit_embedding(
     message: str,
     changed_file_list: list[ChangedFile],
     commit_id: int | None = None,
+    analysis: CommitAnalysis | None = None,
 ) -> None:
     """커밋 임베딩용 구조화 텍스트를 생성하고 ChromaDB에 저장한다."""
-    client = _get_client()
-    commit_input = _build_commit_input(message, changed_file_list)
-
-    # 1) LLM으로 구조화 텍스트 생성
-    raw_text = await _call_gemini(client, EMBEDDING_PROMPT, commit_input, timeout=60.0)
-    parsed = _parse_embedding_response(raw_text)
+    # 1) 커밋 분석 결과 확보.
+    # 호출자가 이미 분석한 경우 같은 diff를 LLM에 다시 보내지 않는다.
+    if analysis is None:
+        analysis = await analyze_commit_content(message, changed_file_list)
+    parsed = analysis.embedding
     path_module_tokens = _extract_path_module_tokens(changed_file_list)
     module_tags = _merge_unique_tokens(parsed.module_tags, path_module_tokens)
 
@@ -374,6 +403,7 @@ async def generate_embedding_text(
     message: str,
     changed_file_list: list[ChangedFile],
     commit_id: int | None = None,
+    analysis: CommitAnalysis | None = None,
 ) -> None:
     """백그라운드에서 임베딩용 구조화 텍스트 생성. 응답을 블로킹하지 않음."""
     try:
@@ -383,6 +413,7 @@ async def generate_embedding_text(
             message=message,
             changed_file_list=changed_file_list,
             commit_id=commit_id,
+            analysis=analysis,
         )
     except Exception:
         logger.exception(
