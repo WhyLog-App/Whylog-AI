@@ -90,6 +90,15 @@ def _truncate(value: str) -> str:
     return value[:_MAX_BODY_SIZE] + f"... (truncated, total {len(value)} chars)"
 
 
+def _media_type(content_type: str) -> str:
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _is_json_media_type(content_type: str) -> bool:
+    media_type = _media_type(content_type)
+    return media_type == "application/json" or media_type.endswith("+json")
+
+
 async def _format_body_for_log(request: Request) -> str:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return "(empty)"
@@ -99,22 +108,22 @@ async def _format_body_for_log(request: Request) -> str:
     if content_type.startswith("multipart/form-data"):
         return f"(multipart/form-data omitted, content_length={content_length})"
 
+    if not _is_json_media_type(content_type):
+        media_type = _media_type(content_type) or "non-json"
+        return f"({media_type} body omitted, content_length={content_length})"
+
     body_bytes = await request.body()
     if not body_bytes:
         return "(empty)"
 
-    if "application/json" in content_type:
-        try:
-            parsed = json.loads(body_bytes)
-            sanitized = _sanitize_json(parsed)
-            return _truncate(
-                json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
-            )
-        except json.JSONDecodeError:
-            return f"(malformed json, content_length={len(body_bytes)})"
-
-    body_text = body_bytes.decode("utf-8", errors="replace")
-    return _truncate(body_text)
+    try:
+        parsed = json.loads(body_bytes)
+        sanitized = _sanitize_json(parsed)
+        return _truncate(
+            json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
+        )
+    except json.JSONDecodeError:
+        return f"(malformed json, content_length={len(body_bytes)})"
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
