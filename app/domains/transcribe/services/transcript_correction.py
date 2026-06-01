@@ -108,6 +108,10 @@ async def correct_transcript(
             ),
             timeout=90.0,
             operation_name="Gemini 전사 후처리",
+            log_context={
+                "segment_count": len(segments),
+                "num_speakers": num_speakers,
+            },
         )
         parsed = json.loads(response.text)
         return _validate_raw_segments(parsed)
