@@ -86,7 +86,7 @@ def merge_live_transcript(
 ) -> list[TranscribeSegment]:
     # STT 결과와 WebSocket 발화 로그를 매칭해 최종 전사를 보강
     live_entries = _prepare_live_entries(live_messages)
-    if not segments or not live_entries:
+    if not live_entries:
         logger.info(
             "live transcript merge skipped: "
             "segments=%s live_messages=%s live_entries=%s",
@@ -95,6 +95,20 @@ def merge_live_transcript(
             len(live_entries),
         )
         return segments
+    if not segments:
+        logger.warning(
+            "live transcript merge falling back to WebSocket-only transcript: "
+            "segments=%s live_messages=%s live_entries=%s",
+            len(segments),
+            len(live_messages),
+            len(live_entries),
+        )
+        return _apply_matches(
+            segments,
+            live_entries,
+            matches={},
+            speaker_mapping={},
+        )
 
     matches = _match_segments_to_live_messages(segments, live_entries)
     speaker_mapping = _resolve_speaker_mapping(segments, live_entries, matches)

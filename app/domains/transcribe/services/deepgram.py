@@ -1,3 +1,4 @@
+import logging
 import os
 
 import httpx
@@ -10,6 +11,7 @@ from app.domains.transcribe.services.audio import (
 
 # Deepgram STT API 엔드포인트
 DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
+logger = logging.getLogger(__name__)
 
 # 오디오 파일 확장자 → MIME 타입 매핑
 CONTENT_TYPE_MAP = {
@@ -78,17 +80,27 @@ async def transcribe(
             status_code=502,
         )
 
-    # 응답에서 발화(utterance) 목록 추출
-    utterances = response.json().get("results", {}).get("utterances") or []
-    raw_segments = [
-        {
-            "speaker": utt.get("speaker", 0),
-            "start": utt.get("start", 0.0),
-            "end": utt.get("end", 0.0),
-            "text": utt.get("transcript", ""),
-        }
-        for utt in utterances
-    ]
+    response_payload = response.json()
+    diagnostics = _response_diagnostics(response_payload)
+    logger.info(
+        "Deepgram transcript response: audio_bytes=%s content_type=%s "
+        "utterances=%s channels=%s transcript_chars=%s words=%s",
+        len(audio_bytes),
+        content_type,
+        diagnostics["utterance_count"],
+        diagnostics["channel_count"],
+        diagnostics["transcript_chars"],
+        diagnostics["word_count"],
+    )
+    if diagnostics["utterance_count"] == 0:
+        logger.warning(
+            "Deepgram utterances empty: transcript_chars=%s words=%s",
+            diagnostics["transcript_chars"],
+            diagnostics["word_count"],
+        )
+        logger.warning("Deepgram raw response when utterances empty: %s", response.text)
+
+    raw_segments = _extract_raw_segments(response_payload)
 
     # 연속된 같은 화자 발화 병합 후 최종 응답 포맷으로 변환
     merged = merge_consecutive_speaker_segments(raw_segments)
@@ -104,3 +116,101 @@ async def transcribe(
         }
         for i, seg in enumerate(merged)
     ]
+
+
+def _extract_raw_segments(response_payload: dict) -> list[dict]:
+    results = response_payload.get("results") or {}
+    utterances = results.get("utterances") or []
+    raw_segments = [
+        {
+            "speaker": utt.get("speaker", 0),
+            "start": utt.get("start", 0.0),
+            "end": utt.get("end", 0.0),
+            "text": (utt.get("transcript") or "").strip(),
+        }
+        for utt in utterances
+        if (utt.get("transcript") or "").strip()
+    ]
+    if raw_segments:
+        return raw_segments
+
+    alternative = _primary_alternative(response_payload)
+    words = alternative.get("words") or []
+    word_segments = _segments_from_words(words)
+    if word_segments:
+        return word_segments
+
+    transcript = (alternative.get("transcript") or "").strip()
+    if transcript:
+        return [
+            {
+                "speaker": 0,
+                "start": 0.0,
+                "end": 0.0,
+                "text": transcript,
+            }
+        ]
+    return []
+
+
+def _segments_from_words(words: list[dict]) -> list[dict]:
+    segments: list[dict] = []
+    current: dict | None = None
+    for word in words:
+        text = _word_text(word)
+        if not text:
+            continue
+        speaker = word.get("speaker")
+        if speaker is None:
+            speaker = 0
+        start = _float_or_zero(word.get("start"))
+        end = _float_or_zero(word.get("end"))
+        if current is None or current["speaker"] != speaker:
+            current = {
+                "speaker": speaker,
+                "start": start,
+                "end": end,
+                "text": text,
+            }
+            segments.append(current)
+            continue
+        current["end"] = end
+        current["text"] = f"{current['text']} {text}".strip()
+    return segments
+
+
+def _word_text(word: dict) -> str:
+    return str(word.get("punctuated_word") or word.get("word") or "").strip()
+
+
+def _float_or_zero(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _response_diagnostics(response_payload: dict) -> dict[str, int]:
+    results = response_payload.get("results") or {}
+    utterances = results.get("utterances") or []
+    channels = results.get("channels") or []
+    alternative = _primary_alternative(response_payload)
+    transcript = alternative.get("transcript") or ""
+    words = alternative.get("words") or []
+    return {
+        "utterance_count": len(utterances),
+        "channel_count": len(channels),
+        "transcript_chars": len(transcript),
+        "word_count": len(words),
+    }
+
+
+def _primary_alternative(response_payload: dict) -> dict:
+    results = response_payload.get("results") or {}
+    channels = results.get("channels") or []
+    if not channels:
+        return {}
+    alternatives = channels[0].get("alternatives") or []
+    if not alternatives:
+        return {}
+    return alternatives[0]
