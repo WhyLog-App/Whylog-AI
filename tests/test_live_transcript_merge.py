@@ -436,6 +436,37 @@ def test_merge_live_transcript_uses_websocket_only_when_no_stt_matches():
     ]
 
 
+def test_merge_live_transcript_uses_websocket_only_when_stt_is_empty():
+    live_messages = [
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=9,
+            fromMemberId=1,
+            fromName="김준용",
+            timestamp="00:00:06",
+            text="싱가포르 회의 내용을 공유하겠습니다",
+        ),
+        LiveTranscriptMessage(
+            type="TEXT",
+            meetingId=9,
+            fromMemberId=2,
+            fromName="유상완",
+            timestamp="00:00:15",
+            text="WebSocket 발화 로그 기준으로 분석을 이어가겠습니다",
+        ),
+    ]
+
+    merged = merge_live_transcript([], live_messages)
+
+    assert [segment.member_id for segment in merged] == [1, 2]
+    assert [segment.speaker for segment in merged] == ["김준용", "유상완"]
+    assert [segment.start_time for segment in merged] == ["00:00:06", "00:00:15"]
+    assert [segment.text for segment in merged] == [
+        "싱가포르 회의 내용을 공유하겠습니다",
+        "WebSocket 발화 로그 기준으로 분석을 이어가겠습니다",
+    ]
+
+
 def test_merge_live_transcript_global_match_prevents_greedy_steal():
     segments = [
         _segment(1, "Speaker 0", "00:00:00", "웹소켓 로그 확인"),
