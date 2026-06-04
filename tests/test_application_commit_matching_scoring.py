@@ -93,6 +93,35 @@ class TestKeywordScorePolicy:
         )
         assert score == 30
 
+    def test_generic_keyword_overlap_does_not_raise_score(self):
+        score = score_keyword_match(
+            {"id", "사용자", "회의", "페이지", "컴포넌트"},
+            {"id", "사용자", "회의", "페이지", "컴포넌트"},
+        )
+
+        assert score == 0
+
+    def test_domain_keyword_overlap_scores_without_generic_tokens(self):
+        score = score_keyword_match(
+            {"jwt", "토큰", "인증", "id", "사용자"},
+            {"jwt", "토큰", "id", "사용자"},
+        )
+
+        assert score == 25
+
+    def test_loading_spinner_keyword_beats_generic_ui_overlap(self):
+        generic_score = score_keyword_match(
+            {"로딩", "스피너", "컴포넌트", "페이지"},
+            {"state", "컴포넌트", "페이지"},
+        )
+        spinner_score = score_keyword_match(
+            {"로딩", "스피너", "컴포넌트", "페이지"},
+            {"로딩", "ui"},
+        )
+
+        assert generic_score == 0
+        assert spinner_score == 15
+
 
 class TestContextScorePolicy:
     def test_same_domain_folder_returns_20(self):
@@ -109,6 +138,52 @@ class TestContextScorePolicy:
     def test_unrelated_context_returns_0(self):
         score = score_context_match({"billing"}, {"auth", "token"})
         assert score == 0
+
+    def test_generic_module_overlap_does_not_raise_score(self):
+        score = score_context_match(
+            {"id", "commit", "page", "state"},
+            {"id", "commit", "page", "state"},
+        )
+
+        assert score == 0
+
+    def test_domain_module_overlap_scores_without_generic_tokens(self):
+        score = score_context_match(
+            {"jwt", "id"},
+            {"jwt", "id", "commit"},
+        )
+
+        assert score == 10
+
+
+class TestTokenExtractionPolicy:
+    def test_extract_tech_keywords_filters_generic_ui_and_identity_tokens(self):
+        keywords = extract_tech_keywords(
+            "JWT 기반 토큰 인증 방식 도입 사용자 id 회의 페이지 컴포넌트"
+        )
+
+        assert {"jwt", "토큰", "인증"} <= keywords
+        assert (
+            not {
+                "id",
+                "사용자",
+                "회의",
+                "페이지",
+                "컴포넌트",
+                "기반",
+                "방식",
+            }
+            & keywords
+        )
+
+    def test_extract_module_tokens_keeps_compound_ids_and_filters_parts(self):
+        modules = extract_module_tokens(
+            "",
+            "commit,id,page,state,jwt,auth,member_id,application_id",
+        )
+
+        assert {"jwt", "auth", "member_id", "application_id"} <= modules
+        assert not {"commit", "id", "page", "state"} & modules
 
 
 class TestTotalScorePolicy:

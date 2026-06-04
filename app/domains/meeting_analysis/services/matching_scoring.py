@@ -21,21 +21,44 @@ _GENERIC_STOPWORDS = {
     "changes",
     "code",
     "commit",
+    "component",
+    "components",
     "config",
+    "data",
+    "detail",
+    "details",
     "feature",
     "feat",
+    "field",
+    "fields",
     "fix",
     "hotfix",
+    "id",
     "improve",
     "issue",
+    "item",
+    "list",
     "minor",
+    "page",
+    "pages",
     "patch",
     "refactor",
+    "request",
+    "response",
+    "result",
+    "results",
+    "screen",
+    "state",
+    "status",
     "test",
     "text",
     "title",
+    "view",
+    "views",
     "todo",
+    "ui",
     "update",
+    "user",
     "work",
     "summary",
     "변경요약",
@@ -44,15 +67,39 @@ _GENERIC_STOPWORDS = {
     "기술키워드",
     "근거",
     "적용사항",
+    "공통",
+    "관리",
+    "관련",
+    "구조",
     "기능",
+    "기반",
+    "데이터",
     "개선",
     "구현",
+    "구체화",
+    "결과",
     "수정",
+    "방식",
+    "사용자",
+    "상세",
+    "상태",
+    "서비스",
+    "요청",
+    "응답",
     "작업",
     "적용",
+    "정보",
     "정리",
     "테스트",
     "추가",
+    "커밋",
+    "컴포넌트",
+    "클라이언트",
+    "페이지",
+    "필드",
+    "항목",
+    "화면",
+    "회의",
     "변경",
     "도입",
     "삭제",
@@ -65,29 +112,69 @@ _MODULE_STOPWORDS = {
     "app",
     "build",
     "config",
+    "component",
+    "components",
     "controller",
     "core",
+    "commit",
+    "data",
     "domain",
     "dto",
     "helper",
+    "id",
+    "impl",
     "lib",
     "main",
     "model",
+    "page",
+    "pages",
     "repo",
     "repository",
+    "result",
+    "results",
+    "screen",
     "service",
     "src",
+    "state",
+    "status",
     "test",
     "tests",
     "text",
     "title",
     "utils",
+    "ui",
+    "view",
+    "views",
     "변경요약",
     "변경방향",
     "파일맥락",
     "기술키워드",
     "근거",
     "적용사항",
+    "공통",
+    "관리",
+    "관련",
+    "구조",
+    "기반",
+    "데이터",
+    "구체화",
+    "결과",
+    "방식",
+    "사용자",
+    "상세",
+    "상태",
+    "서비스",
+    "요청",
+    "응답",
+    "정보",
+    "커밋",
+    "컴포넌트",
+    "클라이언트",
+    "페이지",
+    "필드",
+    "항목",
+    "화면",
+    "회의",
 }
 
 _ABSTRACT_COMMIT_WORDS = {
@@ -404,6 +491,26 @@ def extract_module_tokens(text: str, csv_modules: str | None = None) -> set[str]
     }
 
 
+def _scoreable_keyword_tokens(tokens: set[str]) -> set[str]:
+    return {
+        normalized
+        for token in tokens
+        if (normalized := _normalize_token(token))
+        and len(normalized) >= 2
+        and normalized not in _GENERIC_STOPWORDS
+    }
+
+
+def _scoreable_module_tokens(tokens: set[str]) -> set[str]:
+    return {
+        normalized
+        for token in tokens
+        if (normalized := _normalize_token(token))
+        and len(normalized) >= 2
+        and normalized not in _MODULE_STOPWORDS
+    }
+
+
 def is_opposite_direction(
     application_labels: set[str],
     commit_labels: set[str],
@@ -436,7 +543,10 @@ def score_keyword_match(
     application_keywords: set[str],
     commit_keywords: set[str],
 ) -> int:
-    overlap_count = len(application_keywords & commit_keywords)
+    overlap_count = len(
+        _scoreable_keyword_tokens(application_keywords)
+        & _scoreable_keyword_tokens(commit_keywords)
+    )
     if overlap_count <= 0:
         return 0
     if overlap_count == 1:
@@ -450,6 +560,8 @@ def score_context_match(
     application_modules: set[str],
     commit_modules: set[str],
 ) -> int:
+    application_modules = _scoreable_module_tokens(application_modules)
+    commit_modules = _scoreable_module_tokens(commit_modules)
     if not application_modules or not commit_modules:
         return 0
 
